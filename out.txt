@@ -1,0 +1,26 @@
+Keyword: int
+identifier : 'main'
+lparen : '('
+rparen : ')'
+lbrace : '{'
+Keyword: int
+identifier : 'a'
+assign : '='
+integer_literal : '4'
+semicolon : ';'
+Keyword: int
+identifier : 'b'
+assign : '='
+integer_literal : '5'
+semicolon : ';'
+Keyword: int
+identifier : 'c'
+assign : '='
+identifier : 'a'
+plus : '+'
+identifier : 'b'
+semicolon : ';'
+Keyword: return
+integer_literal : '0'
+semicolon : ';'
+rbrace : '}'
