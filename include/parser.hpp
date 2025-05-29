@@ -44,6 +44,22 @@ enum NodeType {
     NT_PointerType,
     NT_ArraySubscripting,
     NT_TernaryExpr,
+    NT_StructAccess,
+    NT_TypeCastExpr,
+    NT_SizeofExpr,
+    NT_DoStmt,
+    NT_ForStmt,
+    NT_SwitchStmt,
+    NT_CaseStmt,
+    NT_DefaultStmt,
+    NT_GotoStmt,
+    NT_ContinueStmt,
+    NT_BreakStmt,
+    NT_StructDecl,
+    NT_EnumDecl,
+    NT_StructType,
+    NT_EnumMember,
+    NT_EnumType,
 };
 
 inline std::string nodeTypeToString(NodeType type){
@@ -72,9 +88,25 @@ inline std::string nodeTypeToString(NodeType type){
         case NT_PointerType: return "PointerType";
         case NT_ArraySubscripting: return "ArraySubscripting";
         case NT_TernaryExpr: return "TernaryExpr";
+        case NT_StructAccess: return "StructAccess";
+        case NT_TypeCastExpr: return "TypeCastExpr";
+        case NT_SizeofExpr: return "SizeofExpr";
+        case NT_DoStmt: return "DoStmt";
+        case NT_ForStmt: return "ForStmt";
+        case NT_SwitchStmt: return "SwitchStmt";
+        case NT_CaseStmt: return "CaseStmt";
+        case NT_DefaultStmt: return "DefaultStmt";
+        case NT_GotoStmt: return "GotoStmt";
+        case NT_ContinueStmt: return "ContinueStmt";
+        case NT_BreakStmt: return "BreakStmt";
+        case NT_StructDecl: return "StructDecl";
+        case NT_EnumDecl: return "EnumDecl";
+        case NT_StructType: return "StructType";
+        case NT_EnumMember: return "EnumMember";
+        case NT_EnumType: return "EnumType";
         
-
     }
+    return "<None>";
 }
 
 
@@ -100,7 +132,6 @@ public:
     }
 
     std::string str(int indent = 0) const {
-        if(!this) return "none";
         std::string indentation(indent * 4, ' ');
         std::string output = indentation + nodeTypeToString(type);
         if (!value.empty()) {
@@ -121,6 +152,8 @@ public:
     NodeType type = NT_None;
     
     std::vector<ASTNode*> children;
+
+    TypeSpecifier dataType; // for now just used for literals
 };
 
 class Parser{
@@ -129,11 +162,31 @@ public:
     
     ASTNode* parseProgram();         // Entry point
 
+    void printAST(){
+        std::cout << root->str() << std::endl;
+    }
     
-    void error(const std::string& msg){
-        std::cout << "From parser: " << std::endl;
-        std::cerr << msg << std::endl;
-        std::cout << "position: " << std::to_string(pos) << std::endl;
+    void error(const std::string& msg) {
+        std::cerr << "Parser Error: " << msg << "\n";
+        std::cerr << "At token position: " << pos;
+
+        if (pos < tokens.size()) {
+            Token& tok = tokens[pos];
+            std::cerr << " → Token: " << tok.str();
+
+            // Optional: if your Token has line/col info, print it
+            // std::cerr << " at line " << std::to_string(tok.line) << ", col " << std::to_string(tok.column);
+        }
+
+        std::cerr << "\nContext (last few tokens):\n";
+        size_t start = (pos >= 5) ? pos - 5 : 0;
+        for (size_t i = start; i < pos && i < tokens.size(); ++i) {
+            std::cerr << "  " << i << ": " << tokens[i].str() << "\n";
+        }
+
+        std::cerr << "\nPartial AST:\n";
+        printAST();
+
         exit(1);
     }
     
@@ -141,25 +194,56 @@ public:
 private:
     std::vector<Token> tokens;
     size_t pos;
-    std::vector<ASTNode*> AST;
+    ASTNode* root;
 
     TypeSpecifier getTypeSpec(const std::string& str);
+    bool isTypeSpecifierStart();
 
     ASTNode* parseFunctionDecl();   // Parses: int main() { ... }
+    ASTNode* parseStructDecl();
+    ASTNode* parseEnumDecl();
+
     ASTNode* parseTypeSpecifier();  // Parses: int, float, etc.
     ASTNode* parseIdentifier();
     ASTNode* parseParameter();      // Parses: <typespec> <ident>
 
-    ASTNode* parseCompoundStmt();   // Parses: { ... }
     ASTNode* parseStatement();      // Parses: return x; or x = 1;
-    ASTNode* parseExpression();     // Parses: a + b * c
+    ASTNode* parseCompoundStmt();   // Parses: { ... }
+    ASTNode* parseReturnStmt();
+    ASTNode* parseVarDecl();
+    ASTNode* parseIfStmt();
+    ASTNode* parseWhileStmt();
+    ASTNode* parseDoStmt();
+    ASTNode* parseForStmt();
+    ASTNode* parseSwitchStmt();
+    ASTNode* parseCaseStmt();
+    ASTNode* parseDefaultStmt();
+    ASTNode* parseGotoStmt();
+
+    ASTNode* parseExpression();    
+    ASTNode* parseSizeofExpr();
+    ASTNode* parseTypeCastExpr();
+    ASTNode* parseUnaryExpr();
+    ASTNode* parseBinaryExpr(); // TODO: make parse expression order of operations correct
+
+    // ASTNode* parsePostfixExpr();
+    // ASTNode* parseMultiplicativeExpr();
+    // ASTNode* parseAdditiveExpr();
+    // ASTNode* parseRelationalExpr();
+    // ASTNode* parseEqualityExpr();
+    // ASTNode* parseLogicalAndExpr();
+    // ASTNode* parseLogicalOrExpr();
+    // ASTNode* parseAssignmentExpr();
+    // ASTNode* parseTernaryExpr();
+
+
     ASTNode* parsePrimary();        // Parses: identifiers, literals
 
 
     bool match(TokenType type);        // Checks and consumes a token if matched
-    Token peek();                      // Peeks at current token
+    Token peek(size_t off=0);                      // Peeks at current token
     Token advance();                   // Consumes and returns current token
     bool expect(TokenType type);       // Expects a token or throws an error
-    bool isAtEnd();                    // End of input
+    bool isAtEnd(size_t off=0);                    // End of input
 
 };

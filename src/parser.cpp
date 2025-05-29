@@ -1,11 +1,14 @@
-#include "../include/parser.hpp"
+#include <cmath>
+#include <cstddef>
+#include <exception>
 #include <sys/errno.h>
 
+#include "../include/parser.hpp"
 
 
-Token Parser::peek() {
-    if (isAtEnd()) return Token(TokenType::END_OF_FILE, "");
-    return tokens[pos];
+Token Parser::peek(size_t off) {
+    if (isAtEnd(off)) return Token(TokenType::END_OF_FILE, "");
+    return tokens[pos+off];
 }
 
 Token Parser::advance() {
@@ -26,29 +29,53 @@ bool Parser::expect(TokenType type) {
     return false; // just in case
 }
 
-bool Parser::isAtEnd() {
-    return pos >= tokens.size(); // || tokens[pos].type == TokenType::END_OF_FILE;
+bool Parser::isAtEnd(size_t off) {
+    return pos+off >= tokens.size(); // || tokens[pos].type == TokenType::END_OF_FILE;
 }
 
 
 ASTNode* Parser::parseProgram(){
-    ASTNode* root = new ASTNode(NT_Program);
+    root = new ASTNode(NT_Program);
 
-    while(!isAtEnd()){
-        if(peek().type == TokenType::END_OF_FILE){
+    while (!isAtEnd()) {
+        if (peek().type == TokenType::END_OF_FILE) {
             break;
-        }if(peek().type == KEYWORD){
-            ASTNode* decl = parseFunctionDecl();
-            if(decl) {
-                root->addChild(decl);
-            }
-            else{
-                error("Expected a function declaration/definition at top level. got keyword: " + peek().value + " instead");
-            }
-        }else{
-            error("Unexpected token at top level: " + peek().str());
         }
+
+        // Handle struct and enum declarations first
+        if (peek().type == KEYWORD &&
+            (peek().kw_type == KEYWORD_STRUCT || peek().kw_type == KEYWORD_ENUM)) {
+
+            ASTNode* decl = nullptr;
+            if (peek().kw_type == KEYWORD_STRUCT) {
+                decl = parseStructDecl();
+            } else if (peek().kw_type == KEYWORD_ENUM) {
+                decl = parseEnumDecl();
+            }
+
+            if (decl) root->addChild(decl);
+            continue;
+        }
+
+        // Handle type specifier-based entries (could be function or global variable)
+        if (peek().type == KEYWORD && getTypeSpec(peek().value) != TS_NONE) {
+            // Lookahead: if after type we have IDENTIFIER and then LPAREN, it's a function
+            if (peek(1).type == TokenType::IDENTIFIER && peek(2).type == TokenType::LPAREN) {
+                ASTNode* decl = parseFunctionDecl();
+                if (decl) {
+                    root->addChild(decl);
+                } else {
+                    error("Expected a function declaration/definition");
+                }
+            } else {
+                root->addChild(parseVarDecl()); // global variable declaration
+            }
+            continue;
+        }
+
+        error("Unexpected token at top level: " + peek().str());
     }
+
     return root;
 }
 
@@ -63,6 +90,14 @@ TypeSpecifier Parser::getTypeSpec(const std::string& str){
     if(str == "signed") return TS_SIGNED;
     if(str == "unsigned") return TS_UNSIGNED;
     return TS_NONE;
+}
+
+bool Parser::isTypeSpecifierStart() {
+    if (peek().type == TokenType::KEYWORD) {
+        if (getTypeSpec(peek().value) != TS_NONE) return true;
+        if (peek().kw_type == KEYWORD_STRUCT || peek().kw_type == KEYWORD_ENUM) return true;
+    }
+    return false;
 }
 
 ASTNode* Parser::parseFunctionDecl(){
@@ -117,22 +152,118 @@ ASTNode* Parser::parseFunctionDecl(){
     return func;
 }
 
-ASTNode* Parser::parseTypeSpecifier(){
-    if (peek().type != TokenType::KEYWORD) return nullptr;
-    if (getTypeSpec(peek().value) == TS_NONE) return nullptr;
+ASTNode* Parser::parseStructDecl(){
+    /*
+    struct <ident> <statement>;
+    */
+    expect(KEYWORD);
+    
+    Token name = advance();
+    ASTNode* structDecl = new ASTNode(NT_StructDecl, name.value);
 
-    // Base type: int, char, etc.
-    Token base = advance();
-    ASTNode* type = new ASTNode(NT_TypeSpecifier, base.value);
+    if(match(LBRACE)){
+        while (!match(RBRACE)) {
+            ASTNode* member = parseVarDecl(); // e.g. int x;
+            structDecl->addChild(member);
+        }
+    }
+    expect(SEMICOLON);
 
-    // Handle one or more '*' tokens indicating pointer depth
-    while (match(TokenType::STAR)) {
-        ASTNode* ptrType = new ASTNode(NT_PointerType);
-        ptrType->addChild(type);
-        type = ptrType;
+    return structDecl;
+
+}
+
+ASTNode* Parser::parseEnumDecl() {
+    advance(); // consume 'enum'
+    ASTNode* enumDecl = new ASTNode(NT_EnumDecl);
+
+    // Optional name
+    if (peek().type == IDENTIFIER) {
+        std::string enumName = advance().value;
+        enumDecl->addChild(new ASTNode(NT_Identifier, enumName));
     }
 
-    return type;
+    // Forward declaration
+    if (match(SEMICOLON)) {
+        return enumDecl;
+    }
+
+    // Definition with member list
+    expect(LBRACE);
+    while (!match(RBRACE)) {
+        if (peek().type != IDENTIFIER) {
+            error("Expected identifier in enum member list");
+        }
+
+        std::string name = advance().value;
+        ASTNode* member = new ASTNode(NT_EnumMember, name);
+
+        if (match(ASSIGN)) {
+            ASTNode* valueExpr = parseExpression();
+            member->addChild(valueExpr);
+        }
+
+        enumDecl->addChild(member);
+
+        if (peek().type == RBRACE) break;
+        expect(COMMA);
+    }
+    if(peek().type == RBRACE) advance();
+    
+    expect(SEMICOLON);
+    return enumDecl;
+}
+
+
+
+ASTNode* Parser::parseTypeSpecifier(){
+    if (peek().type != TokenType::KEYWORD) return nullptr;
+    // if (getTypeSpec(peek().value) == TS_NONE) return nullptr; // no longer works as struct <ident> is also a typename now
+
+    if(peek().type == TokenType::KEYWORD){
+        if(peek().kw_type == KEYWORD_STRUCT){
+            advance(); // consume struct keyword
+            if(peek().type != IDENTIFIER) error("Expected struct name in type specifier");
+
+            Token structName = advance();
+            ASTNode* structType = new ASTNode(NT_StructType, structName.value);
+
+            while(match(TokenType::STAR)){
+                ASTNode* ptr = new ASTNode(NT_PointerType);
+                ptr->addChild(structType);
+                structType = ptr;
+            }
+
+            return structType;
+        }
+        if(peek().kw_type == KEYWORD_ENUM){
+            advance(); 
+            if(peek().type != IDENTIFIER) error("Expected enum name in type specifier");
+
+            Token enumName = advance();
+            ASTNode* enumType = new ASTNode(NT_EnumType, enumName.value);
+
+            while(match(TokenType::STAR)){
+                ASTNode* ptr = new ASTNode(NT_PointerType);
+                ptr->addChild(enumType);
+                enumType = ptr;
+            }
+
+            return enumType;
+
+        }
+        if(getTypeSpec(peek().value) != TS_NONE){
+            Token base = advance();
+            ASTNode* type = new ASTNode(NT_TypeSpecifier, base.value);
+            while(match(STAR)){
+                ASTNode* ptr = new ASTNode(NT_PointerType);
+                ptr->addChild(type);
+                type = ptr;
+            }
+            return type;
+        }
+    }
+    return nullptr;
 }
 
 ASTNode* Parser::parseIdentifier(){
@@ -155,7 +286,83 @@ ASTNode* Parser::parseParameter(){
     return parameter;
 }
 
+
+ASTNode* Parser::parseStatement(){
+
+    if(peek().kw_type == KEYWORD_RETURN){
+        return parseReturnStmt();
+    }
+
+    if(peek().type == LBRACE){
+        return parseCompoundStmt();
+    }
+
+    // Variable declaration (e.g. int x = 5;) or struct STRUCTNAME <objname>
+    pos--; // for some reason, for "struct Obj object" peek() = "Obj" and not struct from 
+    // whre isTypeSpecifierStart expects to start from
+    if (isTypeSpecifierStart()) {
+        return parseVarDecl();
+    }
+    pos++;
+
+    if (peek().type == KEYWORD && peek().kw_type == KEYWORD_IF) {
+        return parseIfStmt();
+    }
+
+    if (peek().type == KEYWORD && peek().kw_type == KEYWORD_WHILE) {
+        return parseWhileStmt();
+    }
+
+    if (peek().type == KEYWORD && peek().kw_type == KEYWORD_DO) {
+        return parseDoStmt();
+    }
+
+    if (peek().type == KEYWORD && peek().kw_type == KEYWORD_FOR) {
+        return parseForStmt();
+    }
+
+    if(peek().type == KEYWORD && peek().kw_type == KEYWORD_SWITCH){
+        return parseSwitchStmt();
+    }
+
+    if(peek().type == KEYWORD && peek().kw_type == KEYWORD_CASE){
+        return parseCaseStmt();
+    }
+
+    if(peek().type == KEYWORD && peek().kw_type == KEYWORD_DEFAULT){
+        return parseDefaultStmt();
+    }
+
+    if(peek().type == KEYWORD && peek().kw_type == KEYWORD_GOTO){
+        return parseGotoStmt();
+    }
+
+    if(peek().type == KEYWORD && peek().kw_type == KEYWORD_CONTINUE){
+        advance();
+        expect(SEMICOLON);
+
+        return new ASTNode(NT_ContinueStmt);
+    }
+
+    if(peek().type == KEYWORD && peek().kw_type == KEYWORD_BREAK){
+        advance();
+        expect(SEMICOLON);
+
+        return new ASTNode(NT_BreakStmt);
+    }
+
+    ASTNode* expr = parseExpression();
+    if(!expr) error("Expected expression statement");
+    expect(SEMICOLON);
+
+    ASTNode* exprStmt = new ASTNode(NT_ExpressionStmt);
+    exprStmt->addChild(expr);
+
+    return exprStmt;
+}
+
 ASTNode* Parser::parseCompoundStmt(){
+    advance(); // past {
     ASTNode* block = new ASTNode(NT_CompoundStmt);
 
     while(!isAtEnd() && peek().type != RBRACE){
@@ -172,171 +379,307 @@ ASTNode* Parser::parseCompoundStmt(){
 
     return block;
 }
-ASTNode* Parser::parseStatement(){
-    /*
-    
-    <statement> ::= <labeled-statement>
-                | <expression-statement>
-                | <compound-statement>
-                | <selection-statement>
-                | <iteration-statement>
-                | <jump-statement>
 
-    <labeled-statement> ::= <identifier> : <statement>
-                        | case <constant-expression> : <statement>
-                        | default : <statement>
+ASTNode* Parser::parseReturnStmt(){
+    advance(); // past return kw
+    ASTNode* returnNode = new ASTNode(NT_ReturnStmt);
 
-    <expression-statement> ::= {<expression>}? ;
+    if(peek().type != SEMICOLON){
+        ASTNode* expr = parseExpression();
+        if(!expr) error("Expected expression after return");
+        returnNode->addChild(expr);
+    }
 
-    <selection-statement> ::= if ( <expression> ) <statement>
-                            | if ( <expression> ) <statement> else <statement>
-                            | switch ( <expression> ) <statement>
+    expect(SEMICOLON);
+    return returnNode;
+}
+ASTNode* Parser::parseVarDecl(){
+    ASTNode* decl = new ASTNode(NT_Declaration);
 
-    <iteration-statement> ::= while ( <expression> ) <statement>
-                            | do <statement> while ( <expression> ) ;
-                            | for ( {<expression>}? ; {<expression>}? ; {<expression>}? ) <statement>
+    ASTNode* type = parseTypeSpecifier();
+    ASTNode* name = parseIdentifier();
+    if (!name) {
+        error("Expected identifier in declaration, got: " + peek().str());
+    }
 
-    <jump-statement> ::= goto <identifier> ;
-                    | continue ;
-                    | break ;
-                    | return {<expression>}? ;
-    
-    */
+    decl->addChild(type);
+    decl->addChild(name);
 
-    if(peek().kw_type == KEYWORD_RETURN){
-        advance(); // past return kw
-        ASTNode* returnNode = new ASTNode(NT_ReturnStmt);
+    if(match(ASSIGN)){
+        ASTNode* expr = parseExpression();
+        if(!expr) error("Expected initializer expression");
+        decl->addChild(expr);
+    }
 
-        if(peek().type != SEMICOLON){
-            ASTNode* expr = parseExpression();
-            if(!expr) error("Expected expression after return");
-            returnNode->addChild(expr);
+    expect(SEMICOLON);
+    return decl;
+}
+ASTNode* Parser::parseIfStmt(){
+    advance(); // skip 'if'
+    expect(LPAREN);
+    ASTNode* cond = parseExpression();
+    expect(RPAREN);
+    ASTNode* trueStmt = parseStatement();
+    ASTNode* ifStmt = new ASTNode(NT_IfStmt);
+    ifStmt->addChild(cond);
+    ifStmt->addChild(trueStmt);
+
+    if (peek().type == KEYWORD && peek().kw_type == KEYWORD_ELSE) {
+        advance(); // skip 'else'
+        ASTNode* falseStmt = parseStatement();
+        ifStmt->addChild(falseStmt);
+    }
+
+    return ifStmt;
+}
+ASTNode* Parser::parseWhileStmt(){
+    advance(); // skip 'while'
+    expect(LPAREN);
+    ASTNode* cond = parseExpression();
+    expect(RPAREN);
+    ASTNode* body = parseStatement();
+    ASTNode* whileStmt = new ASTNode(NT_WhileStmt);
+    whileStmt->addChild(cond);
+    whileStmt->addChild(body);
+    return whileStmt;
+}
+ASTNode* Parser::parseDoStmt(){
+    advance(); // skip 'do'
+    ASTNode* body = parseStatement();
+    if (peek().type != KEYWORD || peek().kw_type != KEYWORD_WHILE) {
+        error("Expected 'while' after 'do' body");
+    }
+    advance(); // skip 'while'
+    expect(LPAREN);
+    ASTNode* cond = parseExpression();
+    expect(RPAREN);
+    expect(SEMICOLON);
+    ASTNode* doStmt = new ASTNode(NT_DoStmt);
+    doStmt->addChild(body);
+    doStmt->addChild(cond);
+    return doStmt;
+}
+ASTNode* Parser::parseForStmt(){
+    advance(); // skip 'for'
+    expect(LPAREN);
+
+    ASTNode* forStmt = new ASTNode(NT_ForStmt);
+
+    // Parse initializer (can be empty)
+    // Parse initializer (can be a declaration or expression)
+    if (peek().type != SEMICOLON) {
+        ASTNode* init = nullptr;
+        if (peek().type == KEYWORD && getTypeSpec(peek().value) != TS_NONE) {
+            init = parseStatement(); // Will consume the semicolon
+            // Remove the last child (ExpressionStmt) if you want to avoid nesting
+        } else {
+            init = parseExpression();
+            expect(SEMICOLON);
         }
-
+        forStmt->addChild(init);
+    } else {
         expect(SEMICOLON);
-        return returnNode;
+        forStmt->addChild(nullptr);
     }
+    
 
-    if(peek().type == LBRACE){
-        advance(); // past {
-        return parseCompoundStmt();
+    // Parse condition (can be empty)
+    if (peek().type != SEMICOLON) {
+        ASTNode* cond = parseExpression();
+        forStmt->addChild(cond);
+    } else {
+        forStmt->addChild(nullptr); // empty condition
     }
-
-    // Variable declaration (e.g. int x = 5;)
-    if(peek().type == KEYWORD && getTypeSpec(peek().value) != TS_NONE){
-        ASTNode* decl = new ASTNode(NT_Declaration);
-
-        ASTNode* type = parseTypeSpecifier();
-        ASTNode* name = parseIdentifier();
-        if(!name) error("Expected identifier in declaration");
-
-        decl->addChild(type);
-        decl->addChild(name);
-
-        if(match(ASSIGN)){
-            ASTNode* expr = parseExpression();
-            if(!expr) error("Expected initializer expression");
-            decl->addChild(expr);
-        }
-
-        expect(SEMICOLON);
-        return decl;
-    }
-
-    ASTNode* expr = parseExpression();
-    if(!expr) error("Expected expression statement");
     expect(SEMICOLON);
 
-    ASTNode* exprStmt = new ASTNode(NT_ExpressionStmt);
-    exprStmt->addChild(expr);
+    // Parse increment (can be empty)
+    if (peek().type != RPAREN) {
+        ASTNode* update = parseExpression();
+        forStmt->addChild(update);
+    } else {
+        forStmt->addChild(nullptr); // empty update
+    }
+    expect(RPAREN);
 
-    return exprStmt;
+    // Loop body
+    ASTNode* body = parseStatement();
+    forStmt->addChild(body);
+
+    return forStmt;
 }
-ASTNode* Parser::parseExpression(){
+ASTNode* Parser::parseSwitchStmt(){
     /*
-    •	Full operator precedence (using recursive descent or Pratt parsing)
-    •	Unary operators (-x, !x, *ptr)
-    •	Function calls (foo(x, y))
-    •	Array subscripting (arr[3])
-    •	Struct access (x.y, x->y)
-    •	Ternary expressions (cond ? a : b)
+    switch ( <expression> ) <statement>
     */
-    Token op = peek();
+    advance(); // past switch kw
+    
+    expect(LPAREN);
+    ASTNode* expr = parseExpression();
+    expect(RPAREN);
 
-    if(
-        op.type == TokenType::MINUS || 
-        op.type == TokenType::NOT || 
-        op.type == TokenType::BIT_NOT || 
-        op.type == TokenType::STAR ||
-        op.type == TokenType::BIT_AND
-    ){
-        // handle unary expr;
-        advance(); // past op
-        ASTNode* operand = parsePrimary();
-        ASTNode* unExpr = new ASTNode(NT_UnaryExpr, op.value);
-        unExpr->addChild(operand);
-        return unExpr;
+    ASTNode* body = parseStatement();
+
+    ASTNode* switchStmt = new ASTNode(NT_SwitchStmt);
+    switchStmt->addChild(expr);
+    switchStmt->addChild(body);
+
+    return switchStmt;
+}
+ASTNode* Parser::parseCaseStmt(){
+    /*
+    case <const-expr> : <statement>
+    */
+    advance(); // past "case" kw
+    ASTNode* constExpr = parseExpression();
+    expect(COLON);
+    ASTNode* body = parseStatement();
+
+    ASTNode* caseStmt = new ASTNode(NT_CaseStmt);
+    caseStmt->addChild(constExpr);
+    caseStmt->addChild(body);
+
+    return caseStmt;
+}
+ASTNode* Parser::parseDefaultStmt(){
+    /*
+    default: <statement>
+    */
+    advance(); // past "defalt" kw
+    expect(COLON);
+    ASTNode* body = parseStatement();
+    ASTNode* defaultStmt = new ASTNode(NT_DefaultStmt);
+    defaultStmt->addChild(body);
+
+    return defaultStmt;
+}
+ASTNode* Parser::parseGotoStmt(){
+    /*
+    goto <identifier>
+    */
+    advance();
+    ASTNode* ident = parseIdentifier();
+    ASTNode* gotoStmt = new ASTNode(NT_GotoStmt);
+    gotoStmt->addChild(ident);
+    expect(SEMICOLON);
+
+    return gotoStmt;
+}
+
+ASTNode* Parser::parseExpression() {
+    if (peek().kw_type == KEYWORD_SIZEOF) {
+        return parseSizeofExpr();
     }
 
-    ASTNode* left = parsePrimary();
-    if(!left) return nullptr; // error("Expected primary") ?
+    if (peek().type == TokenType::LPAREN && getTypeSpec(peek(1).value) != TS_NONE) {
+        return parseTypeCastExpr();
+    }
 
-    while(!isAtEnd()){
+    if (
+        peek().type == TokenType::MINUS || 
+        peek().type == TokenType::NOT || 
+        peek().type == TokenType::BIT_NOT || 
+        peek().type == TokenType::STAR ||
+        peek().type == TokenType::BIT_AND ||
+        peek().type == TokenType::INCREMENT ||
+        peek().type == TokenType::DECREMENT 
+    ) {
+        return parseUnaryExpr();
+    }
+
+    return parseBinaryExpr();
+}
+
+ASTNode* Parser::parseSizeofExpr(){
+    advance(); // sizeof
+    expect(LPAREN);
+    ASTNode* expr = parseExpression();
+    expect(RPAREN);
+    ASTNode* sizeofExpr = new ASTNode(NT_SizeofExpr);
+    sizeofExpr->addChild(expr);
+    return sizeofExpr;
+}
+ASTNode* Parser::parseTypeCastExpr(){
+    expect(LPAREN);
+    ASTNode* type = parseTypeSpecifier();
+    expect(RPAREN);
+    ASTNode* expr = parsePrimary();
+    ASTNode* cast = new ASTNode(NT_TypeCastExpr);
+    cast->addChild(type);
+    cast->addChild(expr);
+    return cast;
+}
+ASTNode* Parser::parseUnaryExpr(){
+    Token op = advance();
+    ASTNode* operand = parsePrimary();
+    ASTNode* node = new ASTNode(NT_UnaryExpr, op.value);
+    node->addChild(operand);
+    return node;
+}
+ASTNode* Parser::parseBinaryExpr(){
+    ASTNode* left = parsePrimary();
+    if (!left) return nullptr;
+
+    while (!isAtEnd()) {
         Token op = peek();
 
-        // only handle basic binary operators for now
-        if(
-            op.type != TokenType::ASSIGN &&
-
-            op.type != TokenType::PLUS && 
-            op.type != TokenType::MINUS && 
-            op.type != TokenType::STAR && 
-            op.type != TokenType::SLASH &&
+        // Handle binary and assignment operators (simple version)
+        if (op.type == TokenType::PLUS ||
+            op.type == TokenType::MINUS ||
+            op.type == TokenType::STAR ||
+            op.type == TokenType::SLASH ||
+            op.type == TokenType::PERCENT ||
+            op.type == TokenType::ASSIGN ||
+            op.type == TokenType::PLUS_ASSIGN ||
+            op.type == TokenType::MINUS_ASSIGN ||
+            op.type == TokenType::STAR_ASSIGN ||
+            op.type == TokenType::SLASH_ASSIGN ||
+            op.type == TokenType::EQ ||
+            op.type == TokenType::NEQ ||
+            op.type == TokenType::GT ||
+            op.type == TokenType::GTE ||
+            op.type == TokenType::LT ||
+            op.type == TokenType::LTE ||
+            op.type == TokenType::AND ||
+            op.type == TokenType::OR ||
+            op.type == TokenType::BIT_AND ||
+            op.type == TokenType::BIT_OR ||
+            op.type == TokenType::BIT_XOR) {
             
-            op.type != TokenType::GT && 
-            op.type != TokenType::GTE && 
-            op.type != TokenType::EQ && 
-            op.type != TokenType::LT && 
-            op.type != TokenType::LTE && 1
+            advance(); // consume operator
 
-        ) break;
+            ASTNode* right = parsePrimary();
+            if (!right) error("Expected expression after binary operator: " + op.value);
 
-        advance();
+            ASTNode* binExpr = new ASTNode(
+                op.type == TokenType::ASSIGN ? NT_Assignment : NT_BinaryExpr,
+                op.value
+            );
+            binExpr->addChild(left);
+            binExpr->addChild(right);
+            left = binExpr;
+        }
+        else if (match(TokenType::QUESTION)) {
+            ASTNode* ternary = new ASTNode(NT_TernaryExpr, "?");
+            ternary->addChild(left);
 
-        ASTNode* right = parsePrimary();
-        if(!right) error("Expected expression after operator: " + op.value);
+            ASTNode* ifTrue = parseExpression();
+            expect(TokenType::COLON);
+            ASTNode* ifFalse = parseExpression();
 
-        ASTNode* binExpr = new ASTNode(
-            (op.type == TokenType::ASSIGN) ? NT_Assignment : NT_BinaryExpr,
-            op.value
-        );
-
-        binExpr->addChild(left);
-        binExpr->addChild(right);
-        left = binExpr; // left-associative
+            ternary->addChild(ifTrue);
+            ternary->addChild(ifFalse);
+            return ternary;
+        }
+        else {
+            break;
+        }
     }
 
-    // Handle ternary operator (right-associative)
-    if (match(TokenType::QUESTION)) {
-        ASTNode* ternary = new ASTNode(NT_TernaryExpr, "?");
-
-        ternary->addChild(left); // condition
-
-        ASTNode* trueExpr = parseExpression();
-        if (!trueExpr) error("Expected expression after '?' in ternary expression");
-        ternary->addChild(trueExpr);
-
-        expect(TokenType::COLON);
-
-        ASTNode* falseExpr = parseExpression();
-        if (!falseExpr) error("Expected expression after ':' in ternary expression");
-        ternary->addChild(falseExpr);
-
-        return ternary;
-    }
-
-    return left; // binExpr ?
+    return left;
 }
+
+
+
 ASTNode* Parser::parsePrimary(){
 
     Token tok = peek();
@@ -384,7 +727,16 @@ ASTNode* Parser::parsePrimary(){
         tok.type == TokenType::STRING_LITERAL 
     ) {
         advance();
-        return new ASTNode(NT_Literal, tok.value);
+        ASTNode* lit = new ASTNode(NT_Literal, tok.value);
+        switch (tok.type) {
+            default: lit->dataType = TS_NONE; break;
+            case INTEGER_LITERAL: lit->dataType = TS_INT; break;
+            case FLOAT_LITERAL: lit->dataType = TS_FLOAT; break;
+            case CHAR_LITERAL: lit->dataType = TS_CHAR; break;
+            case STRING_LITERAL: lit->dataType = TS_CHAR; break;
+        }
+        
+        return lit;
     }
 
     if(tok.type == TokenType::LPAREN){

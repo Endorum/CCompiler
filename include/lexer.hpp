@@ -101,9 +101,6 @@ struct Token{
     KeyWordType kw_type;
     std::string value;
 
-    int line;
-    int column;
-
     std::string str(){
         if(type == KEYWORD){
             return "Keyword: " + stringFromKeyWordType(kw_type);

@@ -1,15 +1,25 @@
 
 
 
-int add(int x, int y){
-    int res = x + y;
+// int add(int x, int y){
+//     int res = x + y;
 
-    return res;
-}
+//     return res;
+// }
+
+enum Test{
+    First = 1,
+    Second = 5,
+};
+
+// struct Obj{
+//     int first;
+//     int second;
+// };
 
 int main(){
 
-    int out = (a > b) ? a : b;
+    enum Test something;
 
     return 0;
 }
