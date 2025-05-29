@@ -7,7 +7,6 @@ OUT = main
 
 $(OUT): $(OBJ)
 	$(CXX) $(CXXFLAGS) -o $@ $^
-	@rm -f $(OBJ) $(DEP)
 
 -include $(DEP)
 

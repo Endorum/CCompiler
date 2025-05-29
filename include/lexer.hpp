@@ -96,7 +96,7 @@ inline std::string stringFromTokenType(TokenType type){
 
 struct Token{
     Token(TokenType type, const std::string& value) : type(type), value(value) { kw_type = NOT_A_KEYWORD; }
-    Token(KeyWordType kw_type) : kw_type(kw_type) { type = KEYWORD; value=""; }
+    Token(KeyWordType kw_type) : kw_type(kw_type) { type = KEYWORD; value=stringFromKeyWordType(kw_type); }
     TokenType type;
     KeyWordType kw_type;
     std::string value;
@@ -118,10 +118,15 @@ public:
     Lexer(std::string& input) : input(input) {}
     size_t position = 0;
 
+    size_t curr_line = 1;
+    size_t curr_column = 1;
+
     void lex();
     void printTokens(){
+        int i=0;
         for(auto token : tokens){
-            std::cout << token.str() << std::endl;
+            std::cout << std::to_string(i) << ": " << token.str() << std::endl;
+            i++;
         }
     }
     std::vector<Token> getTokens() { return tokens; }
@@ -138,16 +143,20 @@ private:
     }
 
     void error(std::string msg){
+        std::cout << "From lexer: " << std::endl;
         std::cerr << msg << std::endl;
         std::cout << "near:" << std::endl;
 
         int count = 0;
-        for (int i = static_cast<int>(tokens.size()) - 5; i < static_cast<int>(tokens.size()); ++i) {
+        for (int i = static_cast<int>(tokens.size()) - 3; i < static_cast<int>(tokens.size()); ++i) {
             if (i >= 0) {
                 std::cout << tokens[i].str() << std::endl;
                 count++;
             }
         }
+
+        std::cout << "Approx. position: Line: " << std::to_string(curr_line) << " Column: " << std::to_string(curr_column) << std::endl;
+
 
         if (count == 0) {
             std::cout << "(no tokens emitted yet)" << std::endl;

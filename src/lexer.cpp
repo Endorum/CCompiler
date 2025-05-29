@@ -11,6 +11,15 @@ void Lexer::lex(){
     while(position < input.size()){
         char c = input.at(position);
 
+        curr_column++;
+
+        if(c == '\n'){
+            curr_line++;
+            curr_column = 1;
+            position++;
+            continue;
+        }
+
         if(std::isspace(c)){
             position++;
             continue;
@@ -44,22 +53,26 @@ void Lexer::lex(){
 
         position++;
     }
+    tokens.push_back(Token(TokenType::END_OF_FILE, "EOF"));
 }
 
 
 
-void Lexer::skipSingleLineComment(){
-    char c = 0;
-    while(c != '\n'){
-        c = input.at(position++);
+void Lexer::skipSingleLineComment() {
+    while (position < input.size() && input.at(position) != '\n') {
+        position++;
     }
 }
 
-void Lexer::skipMultiLineComment(){
-    char c = 0;
-    while(c != '*' && peek(1) != '/'){
-        c = input.at(position++);
+void Lexer::skipMultiLineComment() {
+    while (position + 1 < input.size()) {
+        if (input.at(position) == '*' && input.at(position + 1) == '/') {
+            position += 2;
+            return;
+        }
+        position++;
     }
+    error("ERROR: Unterminated multi-line comment");
 }
 
 Token Lexer::lexIdentifierOrKeyword(){
@@ -297,7 +310,6 @@ Token Lexer::lexOperatorOrPunctuation() {
                 return Token(TokenType::NOT, "!");
             }
 
-        // Add more as needed: %, <, >, &, |, ^, ~, (, ), {, }, [ ] etc.
         case '%':
             position++;
             return Token(TokenType::PERCENT, "%%");
