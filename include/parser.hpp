@@ -9,7 +9,62 @@
 // #include "defs.hpp"
 #include "lexer.hpp"
 
+enum BaseType{
+    BT_VOID,
+    BT_CHAR,
+    BT_SHORT,
+    BT_INT,
+    BT_LONG,
+    BT_FLOAT,
+    BT_DOUBLE,
+    BT_SIGNED,
+    BT_UNSIGNED,
+    BT_STRUCT,
+    BT_ENUM,
+    BT_TYPEDEF_NAME, // for typedef references
+    BT_UNKNOWN
+};
 
+
+inline std::string baseTypeToString(BaseType base){
+    switch(base){
+        case BT_VOID: return "void";
+        case BT_CHAR: return "char";
+        case BT_SHORT: return "short";
+        case BT_INT: return "int";
+        case BT_LONG: return "long";
+        case BT_FLOAT: return "float";
+        case BT_DOUBLE: return "double";
+        case BT_SIGNED: return "signed";
+        case BT_UNSIGNED: return "unsigned";
+        case BT_STRUCT: return "struct";
+        case BT_ENUM: return "enum";
+        case BT_TYPEDEF_NAME: return "typedef";
+        default: return "";
+    }
+}
+
+struct Type{
+    BaseType base=BT_UNKNOWN;
+    std::string name=""; // for struct, enum, typedefs empty otherwise
+    int pointerLevel = 0;
+    std::vector<int> arrayDimensions; // e.g. int arr[5][6] -> (5,6)
+
+    std::string str() const {
+        std::string out;
+        for (int i = 0; i < pointerLevel; ++i) out += "*";
+        if (base == BT_STRUCT || base == BT_ENUM || base == BT_TYPEDEF_NAME) {
+            out += name;
+        } else {
+            out += baseTypeToString(base);
+        }
+        for (int dim : arrayDimensions) {
+            out += "[" + std::to_string(dim) + "]";
+        }
+        return out;
+    }
+
+};
 
 enum TypeSpecifier{
     TS_NONE,
@@ -65,6 +120,7 @@ enum NodeType {
     NT_EnumMember,
     NT_EnumType,
     NT_PostFixExpr,
+    NT_Initializer,
 };
 
 inline std::string nodeTypeToString(NodeType type){
@@ -111,7 +167,7 @@ inline std::string nodeTypeToString(NodeType type){
         case NT_EnumMember: return "EnumMember";
         case NT_EnumType: return "EnumType";
         case NT_PostFixExpr: return "PostFixExpr";
-        
+        case NT_Initializer: return "Initilizer";
         
     }
     return "<None>";
@@ -128,6 +184,7 @@ enum SymbolKind{
 struct Symbol{
     SymbolKind kind;
     std::string name;
+    Type typeInfo;
     // type info scope depth etc
 };
 
@@ -138,6 +195,7 @@ public:
     }
     void enterScope();
     void exitScope();
+    void define(const Symbol& sym);
     void define(SymbolKind kind, const std::string& name);
     bool isTypedef(const std::string& name) const;
     bool isDefined(const std::string& name) const;
@@ -147,13 +205,37 @@ public:
         for (auto it = scopes.rbegin(); it != scopes.rend(); ++it) {
             std::cout << "Scope level " << --scopeLevel << ":\n";
             for (const auto& entry : *it) {
-                std::cout << "  " << entry.first << " (kind: " << static_cast<int>(entry.second.kind) << ")\n";
+                const Symbol& sym = entry.second;
+                std::cout << "  " << sym.name 
+                        << " (kind: " << static_cast<int>(sym.kind) << ")"
+                        << " type: " << sym.typeInfo.str() 
+                        << "\n";
             }
         }
     }
 
+    bool hasSymbol(const std::string& name) const {
+        for (auto it = scopes.rbegin(); it != scopes.rend(); ++it) {
+            auto found = it->find(name);
+            if (found != it->end()) return true;
+        }
+        return false;
+    }
+
+    Symbol getSymbol(const std::string& name) const {
+        for (auto it = scopes.rbegin(); it != scopes.rend(); ++it) {
+            auto found = it->find(name);
+            if (found != it->end()) return found->second;
+        }
+        // Optional: throw an error or return dummy symbol
+        return Symbol{SYM_VARIABLE, name, Type{BT_UNKNOWN}};
+    }
+
 private:    
     std::vector<std::unordered_map<std::string, Symbol>> scopes;
+
+
+    
 };
 
 class ASTNode{
@@ -183,6 +265,7 @@ public:
         if (!value.empty()) {
             output += ": " + value;
         }
+        if(!typeInfo.str().empty()) output += " type info: " + typeInfo.str() + " ";
         output += "\n";
 
         for (const auto& child : children) {
@@ -201,7 +284,7 @@ public:
 
     
 
-    TypeSpecifier dataType; // for now just used for literals
+    Type typeInfo;
 };
 
 class Parser{
@@ -238,12 +321,14 @@ public:
         exit(1);
     }
     
+    SymbolTable symbols;
 
 private:
     std::vector<Token> tokens;
     size_t pos;
     ASTNode* root;
-    SymbolTable symbols;
+
+    
 
     TypeSpecifier getTypeSpec(const std::string& str);
     bool isTypeSpecifierStart();
@@ -281,6 +366,8 @@ private:
     ASTNode* parseBinaryExpr(int minPrec=0); // TODO: make parse expression order of operations correct
 
     ASTNode* parseAtom();
+
+    ASTNode* parseArgumentList();
     ASTNode* parsePrimary();        // Parses: identifiers, literals
 
 

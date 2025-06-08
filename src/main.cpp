@@ -18,7 +18,7 @@ int main(){
 
     std::cout << root->str() << std::endl;
 
-
+    parser.symbols.showScopes();
 
 
     return 0;

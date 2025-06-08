@@ -15,6 +15,11 @@ void SymbolTable::exitScope() {
     }
 }
 
+void SymbolTable::define(const Symbol& sym) {
+    if (scopes.empty()) enterScope();
+    scopes.back()[sym.name] = sym;
+}
+
 void SymbolTable::define(SymbolKind kind, const std::string& name) {
     if (scopes.empty()) enterScope();
     scopes.back()[name] = Symbol{kind, name};
@@ -200,6 +205,8 @@ ASTNode* Parser::parseFunctionDecl(){
     func->addChild(funcName);
     func->addChild(paramList);
 
+    func->typeInfo = returnType->typeInfo;
+
     if(peek().type == LBRACE){
         ASTNode* body = parseCompoundStmt(); // parse body
         func->addChild(body);
@@ -234,6 +241,9 @@ ASTNode* Parser::parseStructDecl(){
     }
     // expect(SEMICOLON);
 
+    structDecl->typeInfo.base = BT_STRUCT;
+    structDecl->typeInfo.name = name->value;
+
     return structDecl;
 
 }
@@ -242,10 +252,12 @@ ASTNode* Parser::parseEnumDecl() {
     advance(); // consume 'enum'
     ASTNode* enumDecl = new ASTNode(NT_EnumDecl);
 
+    std::string enumName = "Unnamed enum";
     // Optional name
     if (peek().type == IDENTIFIER) {
         std::string enumName = advance().value;
         enumDecl->addChild(new ASTNode(NT_Identifier, enumName));
+        
     }
 
     // Forward declaration
@@ -276,6 +288,10 @@ ASTNode* Parser::parseEnumDecl() {
     if(peek().type == RBRACE) advance();
     
     expect(SEMICOLON);
+
+    enumDecl->typeInfo.base = BT_ENUM;
+    enumDecl->typeInfo.name = enumName;
+    
     return enumDecl;
 }
 
@@ -308,16 +324,38 @@ ASTNode* Parser::parseTypedefDecl(){
     // typedefNode->addChild(type);
     // typedefNode->addChild(name);
 
+    TypedefDecl->typeInfo.base = BT_TYPEDEF_NAME;
+    TypedefDecl->typeInfo.name = name->value;
+
     return TypedefDecl;
 }
 
-
+BaseType primTypeStrToBaseType(std::string str){
+    if (str == "void") return BT_VOID;
+    if (str == "char") return BT_CHAR;
+    if (str == "short") return BT_SHORT;
+    if (str == "int") return BT_INT;
+    if (str == "long") return BT_LONG;
+    if (str == "float") return BT_FLOAT;
+    if (str == "double") return BT_DOUBLE;
+    if (str == "signed") return BT_SIGNED;
+    if (str == "unsigned") return BT_UNSIGNED;
+    if (str == "struct") return BT_STRUCT;
+    if (str == "enum") return BT_ENUM;
+    if (str == "typedef") return BT_TYPEDEF_NAME;
+    return BT_UNKNOWN;
+}
 
 ASTNode* Parser::parseTypeSpecifier(){
-
+    ASTNode* node = nullptr;
 
     if (symbols.isTypedef(peek().value)) {
-        return new ASTNode(NT_TypeSpecifier, advance().value);
+        node = new ASTNode(NT_TypeSpecifier, advance().value);
+
+        node->typeInfo.base = BT_TYPEDEF_NAME;
+        node->typeInfo.name = peek().value;
+
+        return node;
     }
 
     if(peek().type == TokenType::KEYWORD){
@@ -328,7 +366,12 @@ ASTNode* Parser::parseTypeSpecifier(){
             Token structName = advance();
             ASTNode* structType = new ASTNode(NT_StructType, structName.value);
 
+            structType->typeInfo.base = BT_STRUCT;
+            structType->typeInfo.name = structName.value;
+
             while(match(TokenType::STAR)){
+                structType->typeInfo.pointerLevel++;
+
                 ASTNode* ptr = new ASTNode(NT_PointerType);
                 ptr->addChild(structType);
                 structType = ptr;
@@ -343,7 +386,12 @@ ASTNode* Parser::parseTypeSpecifier(){
             Token enumName = advance();
             ASTNode* enumType = new ASTNode(NT_EnumType, enumName.value);
 
+            enumType->typeInfo.base = BT_ENUM;
+            enumType->typeInfo.name = enumName.value;
+
             while(match(TokenType::STAR)){
+                enumType->typeInfo.pointerLevel++;
+
                 ASTNode* ptr = new ASTNode(NT_PointerType);
                 ptr->addChild(enumType);
                 enumType = ptr;
@@ -359,7 +407,12 @@ ASTNode* Parser::parseTypeSpecifier(){
         if(getTypeSpec(peek().value) != TS_NONE){
             Token base = advance();
             ASTNode* type = new ASTNode(NT_TypeSpecifier, base.value);
+
+            type->typeInfo.base = primTypeStrToBaseType(base.value);
+
             while(match(STAR)){
+                type->typeInfo.pointerLevel++;
+
                 ASTNode* ptr = new ASTNode(NT_PointerType);
                 ptr->addChild(type);
                 type = ptr;
@@ -458,6 +511,7 @@ ASTNode* Parser::parseStatement(){
 
     ASTNode* exprStmt = new ASTNode(NT_ExpressionStmt);
     exprStmt->addChild(expr);
+    exprStmt->typeInfo = expr->typeInfo;
 
     return exprStmt;
 }
@@ -498,19 +552,90 @@ ASTNode* Parser::parseVarDecl(){
     ASTNode* decl = new ASTNode(NT_Declaration);
 
     ASTNode* type = parseTypeSpecifier();
+    Type typeInfo = type->typeInfo;
+
     ASTNode* name = parseIdentifier();
     if (!name) {
         error("Expected identifier in declaration, got: " + peek().str());
     }
 
+    // Handle array subscripting after identifier (multi-dimensional allowed)
+    while (match(LBRACKET)) {
+        ASTNode* sizeExpr = nullptr;
+        if (peek().type != RBRACKET) {
+            sizeExpr = parseExpression(); // optional size
+        }
+        expect(RBRACKET);
+
+        ASTNode* arraySub = new ASTNode(NT_ArraySubscripting);
+        arraySub->addChild(name); // base
+        if (sizeExpr)
+            arraySub->addChild(sizeExpr);
+
+        // Record this dimension in typeInfo
+        if (sizeExpr && sizeExpr->getType() == NT_Literal) {
+            // You could evaluate this to int, for now just push dummy value
+            typeInfo.arrayDimensions.push_back(std::stoi(sizeExpr->getValue()));
+        } else {
+            // Flexible array → push -1 or 0 to mark unknown size
+            typeInfo.arrayDimensions.push_back(-1);
+        }
+
+        name = arraySub; // chain arrays
+    }
+
     decl->addChild(type);
     decl->addChild(name);
+    decl->typeInfo = typeInfo;
+
+    // Add variable to symbol table
+    Symbol sym;
+    sym.kind = SYM_VARIABLE;
+    sym.name = name->getValue(); // works even if name is wrapped in ArraySubscripting → its first child is Identifier
+
+    // If name is ArraySubscripting, get the base identifier name
+    ASTNode* baseNameNode = name;
+    while (baseNameNode->getType() == NT_ArraySubscripting) {
+        baseNameNode = baseNameNode->getChildren()[0]; // first child is base
+    }
+
+    sym.name = baseNameNode->getValue();
+    sym.typeInfo = typeInfo;
+
+    // Now insert
+    symbols.define(sym);
+    // → You should add a `define(Symbol sym)` overload — see below
 
     if(match(ASSIGN)){
-        ASTNode* expr = parseExpression();
-        if(!expr) error("Expected initializer expression");
-        decl->addChild(expr);
+        ASTNode* initNode = new ASTNode(NT_Initializer);
+
+        if(peek(0).type == LBRACE){
+            advance();
+            ASTNode* InitList = new ASTNode(NT_ExpressionList);
+
+            if (!match(TokenType::RBRACE)) {
+                while (true) {
+                    ASTNode* element = parseExpression();
+                    InitList->addChild(element);
+
+                    if (match(TokenType::RBRACE)) break;
+                    expect(TokenType::COMMA);
+                }
+            }
+
+            initNode->addChild(InitList);
+        }else{
+            ASTNode* expr = parseExpression();
+            if(!expr) error("Expected initializer expression");
+            initNode->addChild(expr);
+        }
+
+        decl->addChild(initNode);
     }
+
+    // add to symbol table
+    
+    
 
     expect(SEMICOLON);
     return decl;
@@ -674,16 +799,7 @@ ASTNode* Parser::parseExpression() {
     if (peek().type == TokenType::LPAREN && getTypeSpec(peek(1).value) != TS_NONE) {
         return parseTypeCastExpr();
     }
-
-    // if (
-    //     peek(1).type == TokenType::INCREMENT ||
-    //     peek(1).type == TokenType::DECREMENT ||
-    //     peek(1).type == TokenType::ARROW ||
-    //     peek(1).type == TokenType::DOT || 0
-    // ){
-    //     return parsePostFixExpr();
-    // }
-
+    
     if (
         peek().type == TokenType::MINUS || 
         peek().type == TokenType::NOT || 
@@ -696,7 +812,7 @@ ASTNode* Parser::parseExpression() {
         return parseUnaryExpr();
     }
 
-    return parseBinaryExpr(0);
+    return parseBinaryExpr();
 }
 
 ASTNode* Parser::parseSizeofExpr(){
@@ -716,6 +832,7 @@ ASTNode* Parser::parseTypeCastExpr(){
     ASTNode* cast = new ASTNode(NT_TypeCastExpr);
     cast->addChild(type);
     cast->addChild(expr);
+    cast->typeInfo = type->typeInfo;
     return cast;
 }
 
@@ -723,7 +840,23 @@ ASTNode* Parser::parseUnaryExpr(){
     Token op = advance();
     ASTNode* operand = parsePrimary();
     ASTNode* node = new ASTNode(NT_UnaryExpr, op.value);
+
+    if(op.type == BIT_AND){
+        // address of -> pointerLevel++;
+        node->typeInfo.pointerLevel++;
+    }
+
+    if (op.type == TokenType::STAR) {
+        if (operand->typeInfo.pointerLevel > 0) {
+            node->typeInfo.pointerLevel--;
+        } else {
+            node->typeInfo.base = BT_UNKNOWN;
+        }
+    }
+
+
     node->addChild(operand);
+    node->typeInfo = operand->typeInfo;
     return node;
 }
 
@@ -789,6 +922,31 @@ ASTNode* Parser::parseBinaryExpr(int minPrec) {
             op.type == TokenType::ASSIGN ? NT_Assignment : NT_BinaryExpr,
             op.value
         );
+        
+
+
+        if (op.type == TokenType::EQ ||
+            op.type == TokenType::NEQ ||
+            op.type == TokenType::LT ||
+            op.type == TokenType::LTE ||
+            op.type == TokenType::GT ||
+            op.type == TokenType::GTE ||
+            op.type == TokenType::AND ||
+            op.type == TokenType::OR) {
+            binExpr->typeInfo.base = BT_INT;
+        }
+        else if (left->typeInfo.base == BT_FLOAT || right->typeInfo.base == BT_FLOAT) {
+            binExpr->typeInfo.base = BT_FLOAT;
+        } else if (left->typeInfo.base == BT_INT || right->typeInfo.base == BT_INT) {
+            binExpr->typeInfo.base = BT_INT;
+        } else {
+            binExpr->typeInfo.base = BT_UNKNOWN;
+        }
+
+        if (op.type == TokenType::ASSIGN) {
+            binExpr->typeInfo = left->typeInfo;
+        }
+
         binExpr->addChild(left);
         binExpr->addChild(right);
 
@@ -812,7 +970,22 @@ ASTNode* Parser::parseAtom() {
     // Identifiers (e.g., variable names, maybe typedefs later)
     if (tok.type == TokenType::IDENTIFIER) {
         advance();
-        return new ASTNode(NT_Identifier, tok.value);
+        ASTNode* node = new ASTNode(NT_Identifier, tok.value);
+
+        // Look up the identifier in symbol table and assign type
+        if (symbols.isDefined(tok.value)) {
+            SymbolKind kind = symbols.getKind(tok.value);
+            if (kind == SYM_VARIABLE || kind == SYM_TYPEDEF || kind == SYM_FUNCTION) {
+                
+                Symbol sym = symbols.getSymbol(tok.value);
+                node->typeInfo = sym.typeInfo;
+
+            }
+        } else {
+            node->typeInfo.base = BT_UNKNOWN; // unknown identifier — will trigger error later
+        }
+
+        return node;
     }
 
     // Literals
@@ -825,13 +998,21 @@ ASTNode* Parser::parseAtom() {
         advance();
         ASTNode* lit = new ASTNode(NT_Literal, tok.value);
         switch (tok.type) {
-            default: lit->dataType = TS_NONE; break;
-            case INTEGER_LITERAL: lit->dataType = TS_INT; break;
-            case FLOAT_LITERAL: lit->dataType = TS_FLOAT; break;
-            case CHAR_LITERAL: lit->dataType = TS_CHAR; break;
-            case STRING_LITERAL: lit->dataType = TS_CHAR; break;
+            default: lit->typeInfo.base = BT_UNKNOWN; break;
+            case INTEGER_LITERAL: lit->typeInfo.base = BT_INT; break;
+            case FLOAT_LITERAL: lit->typeInfo.base = BT_FLOAT; break;
+            case CHAR_LITERAL: lit->typeInfo.base = BT_CHAR; break;
+            case STRING_LITERAL:
+
+                ///// temporary work around
+                lit->typeInfo.base = BT_CHAR;
+                lit->typeInfo.pointerLevel = 1;
+                lit->typeInfo.arrayDimensions.push_back(tok.value.size());
+                /////
+
+                break;
         }
-        return lit;
+        return lit; 
     }
 
     // Parenthesized expression
@@ -843,6 +1024,20 @@ ASTNode* Parser::parseAtom() {
     }
 
     return nullptr; // no valid atom found
+}
+
+ASTNode* Parser::parseArgumentList(){
+    ASTNode* ArgList = new ASTNode(NT_ExpressionList);
+
+    if (!match(TokenType::RPAREN)) {
+        while (true) {
+            ArgList->addChild(parseExpression());
+            if (match(TokenType::RPAREN)) break;
+            expect(TokenType::COMMA);
+        }
+    }
+
+    return ArgList;
 }
 
 ASTNode* Parser::parsePrimary() {
@@ -860,6 +1055,22 @@ ASTNode* Parser::parsePrimary() {
             ASTNode* arrSub = new ASTNode(NT_ArraySubscripting);
             arrSub->addChild(expr);
             arrSub->addChild(index);
+
+            arrSub->typeInfo = expr->typeInfo;
+
+            if (!arrSub->typeInfo.arrayDimensions.empty()) {
+                arrSub->typeInfo.arrayDimensions.erase(
+                    arrSub->typeInfo.arrayDimensions.begin()
+                );
+            } else {
+                // Not an array? Fallback — treat as pointer dereference
+                if (arrSub->typeInfo.pointerLevel > 0) {
+                    arrSub->typeInfo.pointerLevel--;
+                } else {
+                    arrSub->typeInfo.base = BT_UNKNOWN;
+                }
+            }
+
             expr = arrSub;
         }
         else if (tok.type == TokenType::DOT || tok.type == TokenType::ARROW) {
@@ -872,6 +1083,8 @@ ASTNode* Parser::parsePrimary() {
             ASTNode* access = new ASTNode(NT_StructAccess, tok.value);
             access->addChild(expr);
             access->addChild(new ASTNode(NT_Identifier, member.value));
+
+            access->typeInfo.base = BT_UNKNOWN;
             expr = access;
         }
         else if (tok.type == TokenType::LPAREN) {
@@ -879,23 +1092,21 @@ ASTNode* Parser::parsePrimary() {
             ASTNode* call = new ASTNode(NT_CallExpr);
             call->addChild(expr);
 
-            ASTNode* argList = new ASTNode(NT_ExpressionList);
+            ASTNode* ArgList = parseArgumentList();
 
-            if (!match(TokenType::RPAREN)) {
-                while (true) {
-                    argList->addChild(parseExpression());
-                    if (match(TokenType::RPAREN)) break;
-                    expect(TokenType::COMMA);
-                }
-            }
-            call->addChild(argList);
+            call->addChild(ArgList);
+
+            call->typeInfo.base = BT_UNKNOWN;
 
             expr = call;
         }
         else if (tok.type == TokenType::INCREMENT || tok.type == TokenType::DECREMENT) {
             advance();
             ASTNode* postIncDec = new ASTNode(NT_PostFixExpr, tok.value);
+
             postIncDec->addChild(expr);
+            postIncDec->typeInfo = expr->typeInfo;
+
             expr = postIncDec;
         } else {
             break;
