@@ -5,6 +5,47 @@
 
 #include "../include/parser.hpp"
 
+void SymbolTable::enterScope() {
+    scopes.emplace_back();
+}
+
+void SymbolTable::exitScope() {
+    if (!scopes.empty()) {
+        scopes.pop_back();
+    }
+}
+
+void SymbolTable::define(SymbolKind kind, const std::string& name) {
+    if (scopes.empty()) enterScope();
+    scopes.back()[name] = Symbol{kind, name};
+}
+
+bool SymbolTable::isTypedef(const std::string& name) const {
+    for (auto it = scopes.rbegin(); it != scopes.rend(); ++it) {
+        auto found = it->find(name);
+        if (found != it->end()) {
+            return found->second.kind == SymbolKind::SYM_TYPEDEF;
+        }
+    }
+    return false;
+}
+
+bool SymbolTable::isDefined(const std::string& name) const {
+    for (auto it = scopes.rbegin(); it != scopes.rend(); ++it) {
+        if (it->find(name) != it->end()) return true;
+    }
+    return false;
+}
+
+SymbolKind SymbolTable::getKind(const std::string& name) const {
+    for (auto it = scopes.rbegin(); it != scopes.rend(); ++it) {
+        auto found = it->find(name);
+        if (found != it->end()) {
+            return found->second.kind;
+        }
+    }
+    return SymbolKind::SYM_VARIABLE; // default fallback or you can throw
+}
 
 Token Parser::peek(size_t off) {
     if (isAtEnd(off)) return Token(TokenType::END_OF_FILE, "");
@@ -42,23 +83,36 @@ ASTNode* Parser::parseProgram(){
             break;
         }
 
-        // Handle struct and enum declarations first
-        if (peek().type == KEYWORD &&
-            (peek().kw_type == KEYWORD_STRUCT || peek().kw_type == KEYWORD_ENUM)) {
-
-            ASTNode* decl = nullptr;
-            if (peek().kw_type == KEYWORD_STRUCT) {
-                decl = parseStructDecl();
-            } else if (peek().kw_type == KEYWORD_ENUM) {
-                decl = parseEnumDecl();
-            }
-
-            if (decl) root->addChild(decl);
+        if(peek().type == TokenType::INCLUDE_PATH){
+            advance();
             continue;
         }
 
+        if(peek().kw_type == KEYWORD_STRUCT){
+            ASTNode* decl = parseStructDecl();
+            if (decl) root->addChild(decl);
+            else
+                error("Struct declaration was null");
+            continue;
+        }
+
+        if(peek().kw_type == KEYWORD_ENUM){
+            ASTNode* decl = parseEnumDecl();
+            if (decl) root->addChild(decl);
+            else
+                error("Enum declaration was null");
+            continue;
+        }
+
+        if(peek().kw_type == KEYWORD_TYPEDEF){
+            root->addChild(parseTypedefDecl());
+            continue;
+        }
+
+        TypeSpecifier typespec = getTypeSpec(peek().value);
+
         // Handle type specifier-based entries (could be function or global variable)
-        if (peek().type == KEYWORD && getTypeSpec(peek().value) != TS_NONE) {
+        if (typespec != TS_NONE) {
             // Lookahead: if after type we have IDENTIFIER and then LPAREN, it's a function
             if (peek(1).type == TokenType::IDENTIFIER && peek(2).type == TokenType::LPAREN) {
                 ASTNode* decl = parseFunctionDecl();
@@ -89,6 +143,7 @@ TypeSpecifier Parser::getTypeSpec(const std::string& str){
     if(str == "double") return TS_DOUBLE;
     if(str == "signed") return TS_SIGNED;
     if(str == "unsigned") return TS_UNSIGNED;
+    // if str is typedef table
     return TS_NONE;
 }
 
@@ -96,6 +151,9 @@ bool Parser::isTypeSpecifierStart() {
     if (peek().type == TokenType::KEYWORD) {
         if (getTypeSpec(peek().value) != TS_NONE) return true;
         if (peek().kw_type == KEYWORD_STRUCT || peek().kw_type == KEYWORD_ENUM) return true;
+        if(symbols.isDefined(peek().value)) return true;
+    }else if (symbols.isTypedef(peek().value)) {
+        return true;
     }
     return false;
 }
@@ -142,7 +200,7 @@ ASTNode* Parser::parseFunctionDecl(){
     func->addChild(funcName);
     func->addChild(paramList);
 
-    if(match(LBRACE)){
+    if(peek().type == LBRACE){
         ASTNode* body = parseCompoundStmt(); // parse body
         func->addChild(body);
     } else if(!match(SEMICOLON)){
@@ -158,8 +216,15 @@ ASTNode* Parser::parseStructDecl(){
     */
     expect(KEYWORD);
     
-    Token name = advance();
-    ASTNode* structDecl = new ASTNode(NT_StructDecl, name.value);
+    ASTNode* name = parseIdentifier();
+
+
+    if(name == nullptr){
+        name = new ASTNode(NT_None, "Unnamed struct");
+    }
+    
+    ASTNode* structDecl = new ASTNode(NT_StructDecl, name->value);
+    structDecl->addChild(name);
 
     if(match(LBRACE)){
         while (!match(RBRACE)) {
@@ -167,7 +232,7 @@ ASTNode* Parser::parseStructDecl(){
             structDecl->addChild(member);
         }
     }
-    expect(SEMICOLON);
+    // expect(SEMICOLON);
 
     return structDecl;
 
@@ -214,11 +279,46 @@ ASTNode* Parser::parseEnumDecl() {
     return enumDecl;
 }
 
+ASTNode* Parser::parseTypedefDecl(){
+    advance();
+    ASTNode* decl = nullptr;
+    if(peek().kw_type == KEYWORD_STRUCT){
+        decl = parseStructDecl();
+    }else if(peek().kw_type == KEYWORD_ENUM){
+        decl = parseEnumDecl();
+    }else if(getTypeSpec(peek().value) != TS_NONE){
+        decl = parseVarDecl();
+    }else{
+        error("Invalid type definiton");
+    }
+
+    ASTNode* name = parseIdentifier();
+    expect(SEMICOLON);
+    ASTNode* TypedefDecl = new ASTNode(NT_Declaration, "typedef");
+    TypedefDecl->addChild(name);
+    TypedefDecl->addChild(decl);
+
+    // ASTNode* type = parseTypeSpecifier();
+    // ASTNode* name = parseIdentifier();
+    // expect(SEMICOLON);
+
+    symbols.define(SYM_TYPEDEF, name->value);
+
+    // ASTNode* typedefNode = new ASTNode(NT_Declaration);
+    // typedefNode->addChild(type);
+    // typedefNode->addChild(name);
+
+    return TypedefDecl;
+}
+
 
 
 ASTNode* Parser::parseTypeSpecifier(){
-    if (peek().type != TokenType::KEYWORD) return nullptr;
-    // if (getTypeSpec(peek().value) == TS_NONE) return nullptr; // no longer works as struct <ident> is also a typename now
+
+
+    if (symbols.isTypedef(peek().value)) {
+        return new ASTNode(NT_TypeSpecifier, advance().value);
+    }
 
     if(peek().type == TokenType::KEYWORD){
         if(peek().kw_type == KEYWORD_STRUCT){
@@ -250,6 +350,10 @@ ASTNode* Parser::parseTypeSpecifier(){
             }
 
             return enumType;
+
+        }
+        if(peek().kw_type == KEYWORD_TYPEDEF){
+            advance();
 
         }
         if(getTypeSpec(peek().value) != TS_NONE){
@@ -298,12 +402,9 @@ ASTNode* Parser::parseStatement(){
     }
 
     // Variable declaration (e.g. int x = 5;) or struct STRUCTNAME <objname>
-    pos--; // for some reason, for "struct Obj object" peek() = "Obj" and not struct from 
-    // whre isTypeSpecifierStart expects to start from
     if (isTypeSpecifierStart()) {
         return parseVarDecl();
     }
-    pos++;
 
     if (peek().type == KEYWORD && peek().kw_type == KEYWORD_IF) {
         return parseIfStmt();
@@ -574,6 +675,15 @@ ASTNode* Parser::parseExpression() {
         return parseTypeCastExpr();
     }
 
+    // if (
+    //     peek(1).type == TokenType::INCREMENT ||
+    //     peek(1).type == TokenType::DECREMENT ||
+    //     peek(1).type == TokenType::ARROW ||
+    //     peek(1).type == TokenType::DOT || 0
+    // ){
+    //     return parsePostFixExpr();
+    // }
+
     if (
         peek().type == TokenType::MINUS || 
         peek().type == TokenType::NOT || 
@@ -586,7 +696,7 @@ ASTNode* Parser::parseExpression() {
         return parseUnaryExpr();
     }
 
-    return parseBinaryExpr();
+    return parseBinaryExpr(0);
 }
 
 ASTNode* Parser::parseSizeofExpr(){
@@ -608,6 +718,7 @@ ASTNode* Parser::parseTypeCastExpr(){
     cast->addChild(expr);
     return cast;
 }
+
 ASTNode* Parser::parseUnaryExpr(){
     Token op = advance();
     ASTNode* operand = parsePrimary();
@@ -615,116 +726,101 @@ ASTNode* Parser::parseUnaryExpr(){
     node->addChild(operand);
     return node;
 }
-ASTNode* Parser::parseBinaryExpr(){
+
+int Parser::getPrecedence(TokenType type) {
+    switch (type) {
+        case TokenType::ASSIGN:
+        case TokenType::PLUS_ASSIGN:
+        case TokenType::MINUS_ASSIGN:
+        case TokenType::STAR_ASSIGN:
+        case TokenType::SLASH_ASSIGN:
+            return 1; // lowest precedence (right-associative)
+
+        case TokenType::OR: return 2;
+        case TokenType::AND: return 3;
+
+        case TokenType::EQ:
+        case TokenType::NEQ:
+            return 4;
+
+        case TokenType::LT:
+        case TokenType::LTE:
+        case TokenType::GT:
+        case TokenType::GTE:
+            return 5;
+
+        case TokenType::PLUS:
+        case TokenType::MINUS:
+            return 6;
+
+        case TokenType::STAR:
+        case TokenType::SLASH:
+        case TokenType::PERCENT:
+            return 7;
+
+        default:
+            return -1; // not a binary operator
+    }
+}
+
+bool Parser::isRightAssociative(TokenType type) {
+    return (type == TokenType::ASSIGN ||
+            type == TokenType::PLUS_ASSIGN ||
+            type == TokenType::MINUS_ASSIGN ||
+            type == TokenType::STAR_ASSIGN ||
+            type == TokenType::SLASH_ASSIGN);
+}
+
+ASTNode* Parser::parseBinaryExpr(int minPrec) {
     ASTNode* left = parsePrimary();
-    if (!left) return nullptr;
 
-    while (!isAtEnd()) {
+    while (true) {
         Token op = peek();
+        int prec = getPrecedence(op.type);
+        if (prec < minPrec) break;
 
-        // Handle binary and assignment operators (simple version)
-        if (op.type == TokenType::PLUS ||
-            op.type == TokenType::MINUS ||
-            op.type == TokenType::STAR ||
-            op.type == TokenType::SLASH ||
-            op.type == TokenType::PERCENT ||
-            op.type == TokenType::ASSIGN ||
-            op.type == TokenType::PLUS_ASSIGN ||
-            op.type == TokenType::MINUS_ASSIGN ||
-            op.type == TokenType::STAR_ASSIGN ||
-            op.type == TokenType::SLASH_ASSIGN ||
-            op.type == TokenType::EQ ||
-            op.type == TokenType::NEQ ||
-            op.type == TokenType::GT ||
-            op.type == TokenType::GTE ||
-            op.type == TokenType::LT ||
-            op.type == TokenType::LTE ||
-            op.type == TokenType::AND ||
-            op.type == TokenType::OR ||
-            op.type == TokenType::BIT_AND ||
-            op.type == TokenType::BIT_OR ||
-            op.type == TokenType::BIT_XOR) {
-            
-            advance(); // consume operator
+        advance();
 
-            ASTNode* right = parsePrimary();
-            if (!right) error("Expected expression after binary operator: " + op.value);
+        // Right-associative operators need (prec) vs (prec+1)
+        int nextMinPrec = prec + (isRightAssociative(op.type) ? 0 : 1);
+        ASTNode* right = parseBinaryExpr(nextMinPrec);
 
-            ASTNode* binExpr = new ASTNode(
-                op.type == TokenType::ASSIGN ? NT_Assignment : NT_BinaryExpr,
-                op.value
-            );
-            binExpr->addChild(left);
-            binExpr->addChild(right);
-            left = binExpr;
-        }
-        else if (match(TokenType::QUESTION)) {
-            ASTNode* ternary = new ASTNode(NT_TernaryExpr, "?");
-            ternary->addChild(left);
+        ASTNode* binExpr = new ASTNode(
+            op.type == TokenType::ASSIGN ? NT_Assignment : NT_BinaryExpr,
+            op.value
+        );
+        binExpr->addChild(left);
+        binExpr->addChild(right);
 
-            ASTNode* ifTrue = parseExpression();
-            expect(TokenType::COLON);
-            ASTNode* ifFalse = parseExpression();
-
-            ternary->addChild(ifTrue);
-            ternary->addChild(ifFalse);
-            return ternary;
-        }
-        else {
-            break;
-        }
+        left = binExpr;
     }
 
     return left;
 }
 
+bool isPostFixOperator(TokenType type){
+    bool ret = (type == TokenType::INCREMENT ||
+    type == TokenType::DECREMENT ||
+    type == TokenType::ARROW ||
+    type == TokenType::DOT);
+    return ret;
+}
 
-
-ASTNode* Parser::parsePrimary(){
-
+ASTNode* Parser::parseAtom() {
     Token tok = peek();
 
-    if(tok.type == TokenType::IDENTIFIER){
+    // Identifiers (e.g., variable names, maybe typedefs later)
+    if (tok.type == TokenType::IDENTIFIER) {
         advance();
-        ASTNode* id = new ASTNode(NT_Identifier, tok.value);
-
-        if(peek().type == LPAREN){
-            advance();
-            ASTNode* call = new ASTNode(NT_CallExpr);
-            call->addChild(id);
-
-            while(!match(TokenType::RPAREN)){
-                ASTNode* arg = parseExpression();
-                if(!arg) error("Expected expression in function call");
-                call->addChild(arg);
-
-                if(match(RPAREN)) break;
-                expect(TokenType::COMMA);
-            }
-
-            return call;
-        }
-
-        if (match(TokenType::LBRACKET)) {
-            ASTNode* arrSub = new ASTNode(NT_ArraySubscripting);
-            arrSub->addChild(id); // the array variable
-
-            ASTNode* indexExpr = parseExpression();
-            if (!indexExpr) error("Expected index expression inside array subscript");
-            arrSub->addChild(indexExpr);
-
-            expect(TokenType::RBRACKET);
-            return arrSub;
-        }
-
-        return id;
+        return new ASTNode(NT_Identifier, tok.value);
     }
-    
-    if(
+
+    // Literals
+    if (
         tok.type == TokenType::INTEGER_LITERAL ||
         tok.type == TokenType::FLOAT_LITERAL ||
         tok.type == TokenType::CHAR_LITERAL ||
-        tok.type == TokenType::STRING_LITERAL 
+        tok.type == TokenType::STRING_LITERAL
     ) {
         advance();
         ASTNode* lit = new ASTNode(NT_Literal, tok.value);
@@ -735,16 +831,76 @@ ASTNode* Parser::parsePrimary(){
             case CHAR_LITERAL: lit->dataType = TS_CHAR; break;
             case STRING_LITERAL: lit->dataType = TS_CHAR; break;
         }
-        
         return lit;
     }
 
-    if(tok.type == TokenType::LPAREN){
-        advance();
+    // Parenthesized expression
+    if (tok.type == TokenType::LPAREN) {
+        advance(); // consume '('
         ASTNode* expr = parseExpression();
         expect(TokenType::RPAREN);
         return expr;
     }
 
-    return nullptr;
+    return nullptr; // no valid atom found
+}
+
+ASTNode* Parser::parsePrimary() {
+    ASTNode* expr = parseAtom(); // was the old parsePrimary()
+    if (!expr) return nullptr;
+
+    while (true) {
+        Token tok = peek();
+
+        if (tok.type == TokenType::LBRACKET) {
+            advance();
+            ASTNode* index = parseExpression();
+            expect(TokenType::RBRACKET);
+
+            ASTNode* arrSub = new ASTNode(NT_ArraySubscripting);
+            arrSub->addChild(expr);
+            arrSub->addChild(index);
+            expr = arrSub;
+        }
+        else if (tok.type == TokenType::DOT || tok.type == TokenType::ARROW) {
+            advance();
+            if (peek().type != TokenType::IDENTIFIER) {
+                error("Expected member name after '.' or '->'");
+            }
+            Token member = advance();
+
+            ASTNode* access = new ASTNode(NT_StructAccess, tok.value);
+            access->addChild(expr);
+            access->addChild(new ASTNode(NT_Identifier, member.value));
+            expr = access;
+        }
+        else if (tok.type == TokenType::LPAREN) {
+            advance();
+            ASTNode* call = new ASTNode(NT_CallExpr);
+            call->addChild(expr);
+
+            ASTNode* argList = new ASTNode(NT_ExpressionList);
+
+            if (!match(TokenType::RPAREN)) {
+                while (true) {
+                    argList->addChild(parseExpression());
+                    if (match(TokenType::RPAREN)) break;
+                    expect(TokenType::COMMA);
+                }
+            }
+            call->addChild(argList);
+
+            expr = call;
+        }
+        else if (tok.type == TokenType::INCREMENT || tok.type == TokenType::DECREMENT) {
+            advance();
+            ASTNode* postIncDec = new ASTNode(NT_PostFixExpr, tok.value);
+            postIncDec->addChild(expr);
+            expr = postIncDec;
+        } else {
+            break;
+        }
+    }
+
+    return expr;
 }

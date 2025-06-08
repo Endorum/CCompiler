@@ -3,10 +3,13 @@
 #include <cstddef>
 #include <ostream>
 #include <string>
+#include <unordered_map>
 #include <vector>
 // #include "utils.hpp"
 // #include "defs.hpp"
 #include "lexer.hpp"
+
+
 
 enum TypeSpecifier{
     TS_NONE,
@@ -27,6 +30,7 @@ enum NodeType {
     NT_FunctionDecl,
     NT_FunctionDef,
     NT_ParamList,
+    NT_ExpressionList,
     NT_Parameter,
     NT_CompoundStmt,
     NT_Declaration,
@@ -60,6 +64,7 @@ enum NodeType {
     NT_StructType,
     NT_EnumMember,
     NT_EnumType,
+    NT_PostFixExpr,
 };
 
 inline std::string nodeTypeToString(NodeType type){
@@ -71,6 +76,7 @@ inline std::string nodeTypeToString(NodeType type){
         case NT_FunctionDecl: return "FunctionDecl";
         case NT_FunctionDef: return "FunctionDef";
         case NT_ParamList: return "ParamList";
+        case NT_ExpressionList: return "ExpressionList";
         case NT_Parameter: return "Parameter";
         case NT_CompoundStmt: return "CompoundStmt";
         case NT_Declaration: return "Declaration";
@@ -104,11 +110,51 @@ inline std::string nodeTypeToString(NodeType type){
         case NT_StructType: return "StructType";
         case NT_EnumMember: return "EnumMember";
         case NT_EnumType: return "EnumType";
+        case NT_PostFixExpr: return "PostFixExpr";
+        
         
     }
     return "<None>";
 }
 
+
+
+enum SymbolKind{
+    SYM_TYPEDEF,
+    SYM_VARIABLE,
+    SYM_FUNCTION,
+};
+
+struct Symbol{
+    SymbolKind kind;
+    std::string name;
+    // type info scope depth etc
+};
+
+class SymbolTable{
+public:
+    SymbolTable(){
+        enterScope();
+    }
+    void enterScope();
+    void exitScope();
+    void define(SymbolKind kind, const std::string& name);
+    bool isTypedef(const std::string& name) const;
+    bool isDefined(const std::string& name) const;
+    SymbolKind getKind(const std::string& name) const;
+    void showScopes() {
+        int scopeLevel = scopes.size();
+        for (auto it = scopes.rbegin(); it != scopes.rend(); ++it) {
+            std::cout << "Scope level " << --scopeLevel << ":\n";
+            for (const auto& entry : *it) {
+                std::cout << "  " << entry.first << " (kind: " << static_cast<int>(entry.second.kind) << ")\n";
+            }
+        }
+    }
+
+private:    
+    std::vector<std::unordered_map<std::string, Symbol>> scopes;
+};
 
 class ASTNode{
 public:
@@ -153,6 +199,8 @@ public:
     
     std::vector<ASTNode*> children;
 
+    
+
     TypeSpecifier dataType; // for now just used for literals
 };
 
@@ -195,6 +243,7 @@ private:
     std::vector<Token> tokens;
     size_t pos;
     ASTNode* root;
+    SymbolTable symbols;
 
     TypeSpecifier getTypeSpec(const std::string& str);
     bool isTypeSpecifierStart();
@@ -202,6 +251,7 @@ private:
     ASTNode* parseFunctionDecl();   // Parses: int main() { ... }
     ASTNode* parseStructDecl();
     ASTNode* parseEnumDecl();
+    ASTNode* parseTypedefDecl();
 
     ASTNode* parseTypeSpecifier();  // Parses: int, float, etc.
     ASTNode* parseIdentifier();
@@ -223,20 +273,14 @@ private:
     ASTNode* parseExpression();    
     ASTNode* parseSizeofExpr();
     ASTNode* parseTypeCastExpr();
+    // ASTNode* parsePostFixExpr();
     ASTNode* parseUnaryExpr();
-    ASTNode* parseBinaryExpr(); // TODO: make parse expression order of operations correct
 
-    // ASTNode* parsePostfixExpr();
-    // ASTNode* parseMultiplicativeExpr();
-    // ASTNode* parseAdditiveExpr();
-    // ASTNode* parseRelationalExpr();
-    // ASTNode* parseEqualityExpr();
-    // ASTNode* parseLogicalAndExpr();
-    // ASTNode* parseLogicalOrExpr();
-    // ASTNode* parseAssignmentExpr();
-    // ASTNode* parseTernaryExpr();
+    int getPrecedence(TokenType type);
+    bool isRightAssociative(TokenType type);
+    ASTNode* parseBinaryExpr(int minPrec=0); // TODO: make parse expression order of operations correct
 
-
+    ASTNode* parseAtom();
     ASTNode* parsePrimary();        // Parses: identifiers, literals
 
 
