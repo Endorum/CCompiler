@@ -289,6 +289,14 @@ ASTNode* Parser::parseEnumDecl() {
         std::string name = advance().value;
         ASTNode* member = new ASTNode(NT_EnumMember, name);
 
+        Symbol enumMember;
+        enumMember.kind = SYM_ENUM_MEMBER;
+        enumMember.name = name;
+        enumMember.owningScopeName = currentScopeName;
+        enumMember.typeInfo.base = BT_INT;
+
+        symbols.define(enumMember);
+
         if (match(ASSIGN)) {
             ASTNode* valueExpr = parseExpression();
             member->addChild(valueExpr);
@@ -654,6 +662,10 @@ ASTNode* Parser::parseVarDecl(){
         decl->addChild(initNode);
     }
 
+    Symbol oldSym = symbols.getSymbol(name->getValue());
+
+    
+
 
     // Add variable to symbol table
     Symbol sym;
@@ -806,7 +818,7 @@ bool Parser::isConstantExpression(ASTNode* node){
             // Could be constant if it's an enum value or a #define (not implemented yet)
             if (symbols.isDefined(node->getValue())) {
                 Symbol sym = symbols.getSymbol(node->getValue());
-                return sym.kind == SYM_TYPEDEF; // You may want SYM_CONSTANT or SYM_ENUM_MEMBER here!
+                return sym.kind == SYM_TYPEDEF || sym.kind == SYM_ENUM_MEMBER; // You may want SYM_CONSTANT or SYM_ENUM_MEMBER here!
             }
             return false;
 
@@ -1047,7 +1059,13 @@ ASTNode* Parser::parseAtom() {
         // Look up the identifier in symbol table and assign type
         if (symbols.isDefined(tok.value)) {
             SymbolKind kind = symbols.getKind(tok.value);
-            if (kind == SYM_VARIABLE || kind == SYM_TYPEDEF || kind == SYM_FUNCTION || kind == SYM_PARAMETER ) {
+
+            if (kind == SYM_VARIABLE 
+                || kind == SYM_TYPEDEF 
+                || kind == SYM_FUNCTION 
+                || kind == SYM_PARAMETER 
+                || kind == SYM_ENUM_MEMBER
+            ) {
                 
                 Symbol sym = symbols.getSymbol(tok.value);
                 node->typeInfo = sym.typeInfo;

@@ -5,46 +5,9 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
-// #include "utils.hpp"
-// #include "defs.hpp"
+#include "utils.hpp"
+#include "defs.hpp"
 #include "lexer.hpp"
-
-enum BaseType{
-    BT_VOID,
-    BT_CHAR,
-    BT_SHORT,
-    BT_INT,
-    BT_LONG,
-    BT_FLOAT,
-    BT_DOUBLE,
-    BT_SIGNED,
-    BT_UNSIGNED,
-    BT_STRUCT,
-    BT_ENUM,
-    BT_TYPEDEF_NAME, // for typedef references
-    BT_UNKNOWN,
-    BT_INIT_LIST,
-};
-
-
-inline std::string baseTypeToString(BaseType base){
-    switch(base){
-        case BT_VOID: return "void";
-        case BT_CHAR: return "char";
-        case BT_SHORT: return "short";
-        case BT_INT: return "int";
-        case BT_LONG: return "long";
-        case BT_FLOAT: return "float";
-        case BT_DOUBLE: return "double";
-        case BT_SIGNED: return "signed";
-        case BT_UNSIGNED: return "unsigned";
-        case BT_STRUCT: return "struct";
-        case BT_ENUM: return "enum";
-        case BT_TYPEDEF_NAME: return "typedef";
-        case BT_INIT_LIST: return "init list";
-        default: return "";
-    }
-}
 
 
 
@@ -77,113 +40,6 @@ struct Function{
     size_t paramCount;
 };
 
-enum TypeSpecifier{
-    TS_NONE,
-    TS_VOID,
-    TS_CHAR,
-    TS_SHORT,
-    TS_INT,
-    TS_LONG,
-    TS_FLOAT,
-    TS_DOUBLE,
-    TS_SIGNED,
-    TS_UNSIGNED
-};
-
-enum NodeType {
-    NT_None,
-    NT_Program,
-    NT_FunctionDecl,
-    NT_FunctionDef,
-    NT_ParamList,
-    NT_ExpressionList,
-    NT_Parameter,
-    NT_CompoundStmt,
-    NT_Declaration,
-    NT_Assignment,
-    NT_IfStmt,
-    NT_WhileStmt,
-    NT_ReturnStmt,
-    NT_ExpressionStmt,
-    NT_BinaryExpr,
-    NT_UnaryExpr,
-    NT_Literal,
-    NT_Identifier,
-    NT_CallExpr,
-    NT_TypeSpecifier,
-    NT_PointerType,
-    NT_ArraySubscripting,
-    NT_TernaryExpr,
-    NT_StructAccess,
-    NT_TypeCastExpr,
-    NT_SizeofExpr,
-    NT_DoStmt,
-    NT_ForStmt,
-    NT_SwitchStmt,
-    NT_CaseStmt,
-    NT_DefaultStmt,
-    NT_GotoStmt,
-    NT_ContinueStmt,
-    NT_BreakStmt,
-    NT_StructDecl,
-    NT_EnumDecl,
-    NT_StructType,
-    NT_EnumMember,
-    NT_EnumType,
-    NT_PostFixExpr,
-    NT_Initializer,
-};
-
-inline std::string nodeTypeToString(NodeType type){
-    switch (type) {
-    
-    
-        case NT_None: return "None";
-        case NT_Program: return "Program";
-        case NT_FunctionDecl: return "FunctionDecl";
-        case NT_FunctionDef: return "FunctionDef";
-        case NT_ParamList: return "ParamList";
-        case NT_ExpressionList: return "ExpressionList";
-        case NT_Parameter: return "Parameter";
-        case NT_CompoundStmt: return "CompoundStmt";
-        case NT_Declaration: return "Declaration";
-        case NT_Assignment: return "Assignment";
-        case NT_IfStmt: return "IfStmt";
-        case NT_WhileStmt: return "WhileStmt";
-        case NT_ReturnStmt: return "ReturnStmt";
-        case NT_ExpressionStmt: return "ExpressionStmt";
-        case NT_BinaryExpr: return "BinaryExpr";
-        case NT_UnaryExpr: return "UnaryExpr";
-        case NT_Literal: return "Literal";
-        case NT_Identifier: return "Identifier";
-        case NT_CallExpr: return "CallExpr";
-        case NT_TypeSpecifier: return "TypeSpecifier";
-        case NT_PointerType: return "PointerType";
-        case NT_ArraySubscripting: return "ArraySubscripting";
-        case NT_TernaryExpr: return "TernaryExpr";
-        case NT_StructAccess: return "StructAccess";
-        case NT_TypeCastExpr: return "TypeCastExpr";
-        case NT_SizeofExpr: return "SizeofExpr";
-        case NT_DoStmt: return "DoStmt";
-        case NT_ForStmt: return "ForStmt";
-        case NT_SwitchStmt: return "SwitchStmt";
-        case NT_CaseStmt: return "CaseStmt";
-        case NT_DefaultStmt: return "DefaultStmt";
-        case NT_GotoStmt: return "GotoStmt";
-        case NT_ContinueStmt: return "ContinueStmt";
-        case NT_BreakStmt: return "BreakStmt";
-        case NT_StructDecl: return "StructDecl";
-        case NT_EnumDecl: return "EnumDecl";
-        case NT_StructType: return "StructType";
-        case NT_EnumMember: return "EnumMember";
-        case NT_EnumType: return "EnumType";
-        case NT_PostFixExpr: return "PostFixExpr";
-        case NT_Initializer: return "Initilizer";
-        
-    }
-    return "<None>";
-}
-
 
 
 enum SymbolKind{
@@ -191,6 +47,7 @@ enum SymbolKind{
     SYM_VARIABLE,
     SYM_FUNCTION,
     SYM_PARAMETER,
+    SYM_ENUM_MEMBER,
 };
 
 struct Symbol{
@@ -219,6 +76,7 @@ public:
             case SYM_VARIABLE: return "variable";
             case SYM_FUNCTION: return "function";
             case SYM_PARAMETER: return "parameter";
+            case SYM_ENUM_MEMBER: return "enum member";
         }
     }
 
@@ -307,7 +165,7 @@ public:
         if (!value.empty()) {
             output += ": \'" + value + "\'";
         }
-        bool debug = false;
+        bool debug = true;
         if(!typeInfo.str().empty() && debug) output += " type info: " + typeInfo.str() + " ";
         output += "\n";
 
@@ -349,7 +207,7 @@ public:
             std::cerr << " → Token: " << tok.str();
 
             // Optional: if your Token has line/col info, print it
-            // std::cerr << " at line " << std::to_string(tok.line) << ", col " << std::to_string(tok.column);
+            std::cerr << " at line " << std::to_string(tok.line) << ", col " << std::to_string(tok.column);
         }
 
         std::cerr << "\nContext (last few tokens):\n";

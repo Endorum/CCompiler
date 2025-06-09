@@ -47,3 +47,78 @@ typedef enum{
     KEYWORD__STATIC_ASSERT,
     KEYWORD__THREAD_LOCAL
 }KeyWordType;
+
+
+enum BaseType{
+    BT_VOID,
+    BT_CHAR,
+    BT_SHORT,
+    BT_INT,
+    BT_LONG,
+    BT_FLOAT,
+    BT_DOUBLE,
+    BT_SIGNED,
+    BT_UNSIGNED,
+    BT_STRUCT,
+    BT_ENUM,
+    BT_TYPEDEF_NAME, // for typedef references
+    BT_UNKNOWN,
+    BT_INIT_LIST,
+};
+
+enum TypeSpecifier{
+    TS_NONE,
+    TS_VOID,
+    TS_CHAR,
+    TS_SHORT,
+    TS_INT,
+    TS_LONG,
+    TS_FLOAT,
+    TS_DOUBLE,
+    TS_SIGNED,
+    TS_UNSIGNED
+};
+
+enum NodeType {
+    NT_None,
+    NT_Program,
+    NT_FunctionDecl,
+    NT_FunctionDef,
+    NT_ParamList,
+    NT_ExpressionList,
+    NT_Parameter,
+    NT_CompoundStmt,
+    NT_Declaration,
+    NT_Assignment,
+    NT_IfStmt,
+    NT_WhileStmt,
+    NT_ReturnStmt,
+    NT_ExpressionStmt,
+    NT_BinaryExpr,
+    NT_UnaryExpr,
+    NT_Literal,
+    NT_Identifier,
+    NT_CallExpr,
+    NT_TypeSpecifier,
+    NT_PointerType,
+    NT_ArraySubscripting,
+    NT_TernaryExpr,
+    NT_StructAccess,
+    NT_TypeCastExpr,
+    NT_SizeofExpr,
+    NT_DoStmt,
+    NT_ForStmt,
+    NT_SwitchStmt,
+    NT_CaseStmt,
+    NT_DefaultStmt,
+    NT_GotoStmt,
+    NT_ContinueStmt,
+    NT_BreakStmt,
+    NT_StructDecl,
+    NT_EnumDecl,
+    NT_StructType,
+    NT_EnumMember,
+    NT_EnumType,
+    NT_PostFixExpr,
+    NT_Initializer,
+};

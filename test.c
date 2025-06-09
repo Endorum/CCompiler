@@ -1,25 +1,26 @@
 
 
-float addf(float a, float b){
-    return a+b;
-}
+enum{
+    FIRST = 5,
+    SECOND,
+    THIRD
+};
 
-
-int testVar = 0;
+enum{
+    FIRST,
+    SECOND,
+    THIRD
+};
 
 
 int main(){ 
-
     int i=0;
-
+    int i=4;
     switch (i) {
-        case 0: return 0;
-        case 1: return 10;
+        case FIRST: return 0;
+        case SECOND: return 10;
+        case THIRD: return 100;
         default: return -1;
     }
-
-    
-
-    sizeof(i);
 
 }

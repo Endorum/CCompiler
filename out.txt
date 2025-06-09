@@ -1,31 +1,144 @@
-float something_from_lib2_h(int a);
 
 
-float something_from_lib_h(int a);
+enum{
+    FIRST = 5,
+    SECOND,
+    THIRD
+};
 
-
-
-
-float addf(float a, float b){
-    return a+b;
-}
-
-
-int testVar = 0;
+enum{
+    FIRST,
+    SECOND,
+    THIRD
+};
 
 
 int main(){ 
-
     int i=0;
-
+    int i=4;
     switch (i) {
-        case 0: return 0;
-        case 1: return 10;
+        case FIRST: return 0;
+        case SECOND: return 10;
+        case THIRD: return 100;
         default: return -1;
     }
 
-    int a = 1234567890;
-
-    sizeof(i);
-
 }
+
+0: Keyword: enum
+1: lbrace : '{'
+2: identifier : 'FIRST'
+3: assign : '='
+4: integer_literal : '5'
+5: comma : ','
+6: identifier : 'SECOND'
+7: comma : ','
+8: identifier : 'THIRD'
+9: rbrace : '}'
+10: semicolon : ';'
+11: Keyword: enum
+12: lbrace : '{'
+13: identifier : 'FIRST'
+14: comma : ','
+15: identifier : 'SECOND'
+16: comma : ','
+17: identifier : 'THIRD'
+18: rbrace : '}'
+19: semicolon : ';'
+20: Keyword: int
+21: identifier : 'main'
+22: lparen : '('
+23: rparen : ')'
+24: lbrace : '{'
+25: Keyword: int
+26: identifier : 'i'
+27: assign : '='
+28: integer_literal : '0'
+29: semicolon : ';'
+30: Keyword: int
+31: identifier : 'i'
+32: assign : '='
+33: integer_literal : '4'
+34: semicolon : ';'
+35: Keyword: switch
+36: lparen : '('
+37: identifier : 'i'
+38: rparen : ')'
+39: lbrace : '{'
+40: Keyword: case
+41: identifier : 'FIRST'
+42: colon : ':'
+43: Keyword: return
+44: integer_literal : '0'
+45: semicolon : ';'
+46: Keyword: case
+47: identifier : 'SECOND'
+48: colon : ':'
+49: Keyword: return
+50: integer_literal : '10'
+51: semicolon : ';'
+52: Keyword: case
+53: identifier : 'THIRD'
+54: colon : ':'
+55: Keyword: return
+56: integer_literal : '100'
+57: semicolon : ';'
+58: Keyword: default
+59: colon : ':'
+60: Keyword: return
+61: minus : '-'
+62: integer_literal : '1'
+63: semicolon : ';'
+64: rbrace : '}'
+65: rbrace : '}'
+66: end_of_file : 'EOF'
+Program
+    EnumDecl type info: Unnamed enum 
+        EnumMember: 'FIRST'
+            Literal: '5' type info: int 
+        EnumMember: 'SECOND'
+        EnumMember: 'THIRD'
+    EnumDecl type info: Unnamed enum 
+        EnumMember: 'FIRST'
+        EnumMember: 'SECOND'
+        EnumMember: 'THIRD'
+    FunctionDecl type info: int 
+        TypeSpecifier: 'int' type info: int 
+        Identifier: 'main'
+        ParamList
+        CompoundStmt
+            Declaration type info: int 
+                TypeSpecifier: 'int' type info: int 
+                Identifier: 'i'
+                Initilizer type info: int 
+                    Literal: '0' type info: int 
+            Declaration type info: int 
+                TypeSpecifier: 'int' type info: int 
+                Identifier: 'i'
+                Initilizer type info: int 
+                    Literal: '4' type info: int 
+            SwitchStmt
+                Identifier: 'i' type info: int 
+                CompoundStmt
+                    CaseStmt
+                        Identifier: 'FIRST' type info: int 
+                        ReturnStmt type info: int 
+                            Literal: '0' type info: int 
+                    CaseStmt
+                        Identifier: 'SECOND' type info: int 
+                        ReturnStmt type info: int 
+                            Literal: '10' type info: int 
+                    CaseStmt
+                        Identifier: 'THIRD' type info: int 
+                        ReturnStmt type info: int 
+                            Literal: '100' type info: int 
+                    DefaultStmt
+                        ReturnStmt type info: int 
+                            UnaryExpr: '-' type info: int 
+                                Literal: '1' type info: int 
+
+Scope level 0:
+  THIRD (kind: enum member) type: int scope: <global>
+  i (kind: variable) type: int scope: main
+  SECOND (kind: enum member) type: int scope: <global>
+  FIRST (kind: enum member) type: int scope: <global>

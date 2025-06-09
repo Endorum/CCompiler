@@ -20,6 +20,9 @@ void Lexer::lex(){
             continue;
         }
 
+        if(tokens.size() > 1) tokens.at(tokens.size() - 1).line = curr_line;
+        if(tokens.size() > 1) tokens.at(tokens.size() - 1).column = curr_line;
+
         if(std::isspace(c)){
             position++;
             continue;
