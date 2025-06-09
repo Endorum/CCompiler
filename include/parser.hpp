@@ -305,9 +305,10 @@ public:
         std::string indentation(indent * 4, ' ');
         std::string output = indentation + nodeTypeToString(type);
         if (!value.empty()) {
-            output += ": " + value;
+            output += ": \'" + value + "\'";
         }
-        if(!typeInfo.str().empty()) output += " type info: " + typeInfo.str() + " ";
+        bool debug = false;
+        if(!typeInfo.str().empty() && debug) output += " type info: " + typeInfo.str() + " ";
         output += "\n";
 
         for (const auto& child : children) {

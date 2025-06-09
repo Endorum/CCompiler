@@ -1051,10 +1051,11 @@ ASTNode* Parser::parseAtom() {
                 
                 Symbol sym = symbols.getSymbol(tok.value);
                 node->typeInfo = sym.typeInfo;
-
+                
             }
         } else {
             node->typeInfo.base = BT_UNKNOWN; // unknown identifier — will trigger error later
+            error("Variable " + tok.value + " not defined in current scope: " + ((currentScopeName.empty()) ? "<global>" : currentScopeName));
         }
 
         return node;
