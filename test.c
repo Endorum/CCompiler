@@ -1,9 +1,21 @@
+float addf(float a, float b){
+    return a+b;
+}
 
-int main(){
 
-    int a = 5;
-    float b = 6.1234567;
+int testVar = 0;
 
-    float c = (float) a;
+
+int main(){ 
+
+    int i=0;
+
+    switch (i) {
+        case 0: return 0;
+        case 1: return 10;
+        default: return -1;
+    }
+
+    sizeof(i);
 
 }

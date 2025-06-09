@@ -1,6 +1,7 @@
 #include <cmath>
 #include <cstddef>
 #include <exception>
+#include <string>
 #include <sys/errno.h>
 
 #include "../include/parser.hpp"
@@ -186,6 +187,8 @@ ASTNode* Parser::parseFunctionDecl(){
     
     
     if(!match(LPAREN)) error("Expected '(' after function name");
+
+    currentScopeName = funcName->value; // for the locals and parameters
     
 
     ASTNode* paramList = new ASTNode(NT_ParamList);
@@ -207,12 +210,23 @@ ASTNode* Parser::parseFunctionDecl(){
 
     func->typeInfo = returnType->typeInfo;
 
+    Function funcStruct;
+    funcStruct.name = funcName->value;
+    funcStruct.returnType = returnType->typeInfo;
+    funcStruct.paramCount = paramList->children.size();
+
+    symbols.defineFunction(funcStruct);
+
+    
+
     if(peek().type == LBRACE){
         ASTNode* body = parseCompoundStmt(); // parse body
         func->addChild(body);
     } else if(!match(SEMICOLON)){
         error("Expected '{' for function body or ';' for declaration end");
     }
+
+    currentScopeName = ""; // back to global scope
 
     return func;
 }
@@ -440,6 +454,18 @@ ASTNode* Parser::parseParameter(){
     parameter->addChild(typespec);
     parameter->addChild(ident);
 
+    parameter->typeInfo = typespec->typeInfo;
+
+    Symbol parameterSym;
+
+    parameterSym.kind = SYM_PARAMETER;
+    parameterSym.name = ident->value;
+    parameterSym.typeInfo = typespec->typeInfo;
+
+    parameterSym.owningScopeName = currentScopeName;
+
+    symbols.define(parameterSym);
+
     return parameter;
 }
 
@@ -539,11 +565,17 @@ ASTNode* Parser::parseReturnStmt(){
     advance(); // past return kw
     ASTNode* returnNode = new ASTNode(NT_ReturnStmt);
 
+    ASTNode* expr;
     if(peek().type != SEMICOLON){
-        ASTNode* expr = parseExpression();
+        expr = parseExpression();
         if(!expr) error("Expected expression after return");
         returnNode->addChild(expr);
+    }else{
+        expr = new ASTNode(NT_None);
+        expr->typeInfo.base = BT_VOID;
     }
+
+    returnNode->typeInfo = expr->typeInfo;
 
     expect(SEMICOLON);
     return returnNode;
@@ -588,6 +620,41 @@ ASTNode* Parser::parseVarDecl(){
     decl->addChild(name);
     decl->typeInfo = typeInfo;
 
+    
+
+    if(match(ASSIGN)){
+        ASTNode* initNode = new ASTNode(NT_Initializer);
+
+        if(peek(0).type == LBRACE){
+            advance();
+            ASTNode* initList = new ASTNode(NT_ExpressionList);
+            initList->typeInfo.base = BT_INIT_LIST;
+
+            if (!match(TokenType::RBRACE)) {
+                while (true) {
+                    ASTNode* element = parseExpression();
+                    initList->addChild(element);
+
+                    if (match(TokenType::RBRACE)) break;
+                    expect(TokenType::COMMA);
+                }
+            }
+
+            initNode->typeInfo = initList->typeInfo;
+
+            initNode->addChild(initList);
+        }else{
+            ASTNode* expr = parseExpression();
+            if(!expr) error("Expected initializer expression");
+
+            initNode->typeInfo = expr->typeInfo;
+            initNode->addChild(expr);
+        }
+
+        decl->addChild(initNode);
+    }
+
+
     // Add variable to symbol table
     Symbol sym;
     sym.kind = SYM_VARIABLE;
@@ -602,40 +669,11 @@ ASTNode* Parser::parseVarDecl(){
     sym.name = baseNameNode->getValue();
     sym.typeInfo = typeInfo;
 
+    sym.owningScopeName = currentScopeName;
+
     // Now insert
     symbols.define(sym);
-    // → You should add a `define(Symbol sym)` overload — see below
 
-    if(match(ASSIGN)){
-        ASTNode* initNode = new ASTNode(NT_Initializer);
-
-        if(peek(0).type == LBRACE){
-            advance();
-            ASTNode* InitList = new ASTNode(NT_ExpressionList);
-
-            if (!match(TokenType::RBRACE)) {
-                while (true) {
-                    ASTNode* element = parseExpression();
-                    InitList->addChild(element);
-
-                    if (match(TokenType::RBRACE)) break;
-                    expect(TokenType::COMMA);
-                }
-            }
-
-            initNode->addChild(InitList);
-        }else{
-            ASTNode* expr = parseExpression();
-            if(!expr) error("Expected initializer expression");
-            initNode->addChild(expr);
-        }
-
-        decl->addChild(initNode);
-    }
-
-    // add to symbol table
-    
-    
 
     expect(SEMICOLON);
     return decl;
@@ -751,13 +789,45 @@ ASTNode* Parser::parseSwitchStmt(){
 
     return switchStmt;
 }
+
+bool Parser::isConstantExpression(ASTNode* node){
+    switch (node->getType()) {
+        case NT_Literal: return true;
+
+        // constant if operand is constant 
+        case NT_UnaryExpr: return isConstantExpression(node->children.at(0));
+
+        // constant if both sides are constant
+        case NT_BinaryExpr:
+            return isConstantExpression(node->children.at(0)) &&
+                   isConstantExpression(node->children.at(1));
+
+        case NT_Identifier:
+            // Could be constant if it's an enum value or a #define (not implemented yet)
+            if (symbols.isDefined(node->getValue())) {
+                Symbol sym = symbols.getSymbol(node->getValue());
+                return sym.kind == SYM_TYPEDEF; // You may want SYM_CONSTANT or SYM_ENUM_MEMBER here!
+            }
+            return false;
+
+        default: return false;
+
+    }
+}
+
 ASTNode* Parser::parseCaseStmt(){
     /*
     case <const-expr> : <statement>
     */
     advance(); // past "case" kw
+
     ASTNode* constExpr = parseExpression();
+    if(!isConstantExpression(constExpr)){
+        error("Case expression must be a constant expression");
+    }
+    
     expect(COLON);
+    
     ASTNode* body = parseStatement();
 
     ASTNode* caseStmt = new ASTNode(NT_CaseStmt);
@@ -822,6 +892,8 @@ ASTNode* Parser::parseSizeofExpr(){
     expect(RPAREN);
     ASTNode* sizeofExpr = new ASTNode(NT_SizeofExpr);
     sizeofExpr->addChild(expr);
+    sizeofExpr->typeInfo.base = BT_INT; // unsinged int
+    sizeofExpr->typeInfo.name = "unsigned"; // temp workaround
     return sizeofExpr;
 }
 ASTNode* Parser::parseTypeCastExpr(){
@@ -975,7 +1047,7 @@ ASTNode* Parser::parseAtom() {
         // Look up the identifier in symbol table and assign type
         if (symbols.isDefined(tok.value)) {
             SymbolKind kind = symbols.getKind(tok.value);
-            if (kind == SYM_VARIABLE || kind == SYM_TYPEDEF || kind == SYM_FUNCTION) {
+            if (kind == SYM_VARIABLE || kind == SYM_TYPEDEF || kind == SYM_FUNCTION || kind == SYM_PARAMETER ) {
                 
                 Symbol sym = symbols.getSymbol(tok.value);
                 node->typeInfo = sym.typeInfo;
@@ -1094,9 +1166,15 @@ ASTNode* Parser::parsePrimary() {
 
             ASTNode* ArgList = parseArgumentList();
 
+            Function func = symbols.getFunction(expr->value);
+
+            if(func.paramCount != ArgList->children.size()){
+                error("Too many Arguments to function call, expected " + std::to_string(func.paramCount) + " have " + std::to_string(ArgList->children.size()));
+            }
+
             call->addChild(ArgList);
 
-            call->typeInfo.base = BT_UNKNOWN;
+            call->typeInfo = func.returnType;
 
             expr = call;
         }

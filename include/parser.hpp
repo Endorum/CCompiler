@@ -22,7 +22,8 @@ enum BaseType{
     BT_STRUCT,
     BT_ENUM,
     BT_TYPEDEF_NAME, // for typedef references
-    BT_UNKNOWN
+    BT_UNKNOWN,
+    BT_INIT_LIST,
 };
 
 
@@ -40,9 +41,12 @@ inline std::string baseTypeToString(BaseType base){
         case BT_STRUCT: return "struct";
         case BT_ENUM: return "enum";
         case BT_TYPEDEF_NAME: return "typedef";
+        case BT_INIT_LIST: return "init list";
         default: return "";
     }
 }
+
+
 
 struct Type{
     BaseType base=BT_UNKNOWN;
@@ -64,6 +68,13 @@ struct Type{
         return out;
     }
 
+};
+
+
+struct Function{
+    std::string name;
+    Type returnType;
+    size_t paramCount;
 };
 
 enum TypeSpecifier{
@@ -179,13 +190,14 @@ enum SymbolKind{
     SYM_TYPEDEF,
     SYM_VARIABLE,
     SYM_FUNCTION,
+    SYM_PARAMETER,
 };
 
 struct Symbol{
     SymbolKind kind;
     std::string name;
     Type typeInfo;
-    // type info scope depth etc
+    std::string owningScopeName; // e.g. "foo" "main", "" for global scope
 };
 
 class SymbolTable{
@@ -200,16 +212,27 @@ public:
     bool isTypedef(const std::string& name) const;
     bool isDefined(const std::string& name) const;
     SymbolKind getKind(const std::string& name) const;
+
+    std::string kindToStr(SymbolKind kind){
+        switch (kind) {
+            case SYM_TYPEDEF: return "typedef";
+            case SYM_VARIABLE: return "variable";
+            case SYM_FUNCTION: return "function";
+            case SYM_PARAMETER: return "parameter";
+        }
+    }
+
     void showScopes() {
         int scopeLevel = scopes.size();
         for (auto it = scopes.rbegin(); it != scopes.rend(); ++it) {
             std::cout << "Scope level " << --scopeLevel << ":\n";
             for (const auto& entry : *it) {
                 const Symbol& sym = entry.second;
-                std::cout << "  " << sym.name 
-                        << " (kind: " << static_cast<int>(sym.kind) << ")"
-                        << " type: " << sym.typeInfo.str() 
-                        << "\n";
+                std::cout   << "  " << sym.name
+                            << " (kind: " << kindToStr(sym.kind) << ")"
+                            << " type: " << sym.typeInfo.str()
+                            << " scope: " << (sym.owningScopeName.empty() ? "<global>" : sym.owningScopeName)
+                            << "\n";
             }
         }
     }
@@ -231,9 +254,28 @@ public:
         return Symbol{SYM_VARIABLE, name, Type{BT_UNKNOWN}};
     }
 
+
+    void defineFunction(Function& func){
+        functions[func.name] = func;
+    }
+
+    Function getFunction(const std::string& name) const {
+        auto it = functions.find(name);
+        if (it == functions.end()) {
+            std::cerr << "SymbolTable Error: function '" << name << "' not defined.\n";
+            std::exit(1); // or throw std::runtime_error if you prefer exceptions
+        }
+        return it->second;
+    }
+
+    bool hasFunction(const std::string& name) const {
+        return functions.find(name) != functions.end();
+    }
+
+    std::unordered_map<std::string, Function> functions;
+
 private:    
     std::vector<std::unordered_map<std::string, Symbol>> scopes;
-
 
     
 };
@@ -328,10 +370,11 @@ private:
     size_t pos;
     ASTNode* root;
 
-    
+    std::string currentScopeName=""; // "" for global scope, otherwise the function name
 
     TypeSpecifier getTypeSpec(const std::string& str);
     bool isTypeSpecifierStart();
+    bool isConstantExpression(ASTNode* node);
 
     ASTNode* parseFunctionDecl();   // Parses: int main() { ... }
     ASTNode* parseStructDecl();
