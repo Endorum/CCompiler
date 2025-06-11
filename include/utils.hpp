@@ -167,21 +167,32 @@ inline std::string nodeTypeToString(NodeType type){
 }
 
 
-inline std::string baseTypeToString(BaseType base){
-    switch(base){
-        case BT_VOID: return "void";
-        case BT_CHAR: return "char";
-        case BT_SHORT: return "short";
-        case BT_INT: return "int";
-        case BT_LONG: return "long";
-        case BT_FLOAT: return "float";
-        case BT_DOUBLE: return "double";
-        case BT_SIGNED: return "signed";
-        case BT_UNSIGNED: return "unsigned";
-        case BT_STRUCT: return "struct";
-        case BT_ENUM: return "enum";
-        case BT_TYPEDEF_NAME: return "typedef";
-        case BT_INIT_LIST: return "init list";
-        default: return "";
+inline std::string baseTypeToString(BaseType base, int pointerLevel = 0){
+
+    std::string out;
+    if(pointerLevel > 0){
+        out += "Pointer to ";
+        for(int i=0;i<pointerLevel;i++){
+            out += "*";
+        }
     }
+    switch(base){
+        case BT_VOID: out += "void"; break;
+        case BT_CHAR: out += "char"; break;
+        case BT_SHORT: out += "short"; break;
+        case BT_INT: out += "int"; break;
+        case BT_LONG: out += "long"; break;
+        case BT_FLOAT: out += "float"; break;
+        case BT_DOUBLE: out += "double"; break;
+        case BT_SIGNED: out += "signed"; break;
+        case BT_UNSIGNED: out += "unsigned"; break;
+        case BT_STRUCT: out += "struct"; break;
+        case BT_ENUM: out += "enum"; break;
+        case BT_TYPEDEF_NAME: out += "typedef"; break;
+        case BT_INIT_LIST: out += "init list"; break;
+        case BT_ARRAY: out += "array"; break;
+        default: out += "Unknown Type: " + std::to_string(base); break;
+    }
+
+    return out;
 }

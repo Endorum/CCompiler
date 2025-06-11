@@ -104,7 +104,7 @@ struct Token{
     size_t line=1;
     size_t column=1;
 
-    std::string str(){
+    std::string str() const {
         if(type == KEYWORD){
             return "Keyword: " + stringFromKeyWordType(kw_type);
         }else{
@@ -141,8 +141,9 @@ private:
 
         return '\0';
     }
+    
 
-    void error(std::string msg){
+    void error(std::string msg) const {
         std::cout << "From lexer: " << std::endl;
         std::cerr << msg << std::endl;
         std::cout << "near:" << std::endl;

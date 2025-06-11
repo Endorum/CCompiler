@@ -28,12 +28,14 @@ int main(){
     ASTNode* root = parser.parseProgram();
 
     std::cout << root->str() << std::endl;
-    parser.symbols.showScopes();
-    parser.symbols.showFunctions();
+    
 
 
     IR_Codegen irGen(root, parser.symbols);
     irGen.generate();
+
+    irGen.symbols.showSymbols();
+    irGen.symbols.showFunctions();
 
     const std::vector<IRInstruction>& instructions = irGen.get_instructions();
     std::cout << "\n\nGenerated IR Instructions:\n";

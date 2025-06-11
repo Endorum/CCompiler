@@ -64,6 +64,7 @@ enum BaseType{
     BT_TYPEDEF_NAME, // for typedef references
     BT_UNKNOWN,
     BT_INIT_LIST,
+    BT_ARRAY,
 };
 
 enum TypeSpecifier{

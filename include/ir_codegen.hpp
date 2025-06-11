@@ -63,14 +63,25 @@ struct Value{
         : value(n), type(t), loc(loc) {}
 
     std::string str() const {
-        if( value.empty()) {
-            return "<empty value>";
-        }
-        if(0){ // debug mode
-            return value + " (" + varTypeToString(type) + ")" + (loc.empty() ? "" : " at " + loc);
-        }else{
-          return value + (loc.empty() ? "" : " at " + loc);
-        }
+        // if( value.empty()) {
+        //     return "<empty value>";
+        // }
+        // if(1){ // debug mode
+        //     return value + " (" + varTypeToString(type) + ")" + (loc.empty() ? "" : " at " + loc);
+        // }else{
+        //   return value + (loc.empty() ? "" : " at " + loc);
+        // }
+
+        bool debug = false;
+
+        std::string res;
+        if (value.empty()) return "";
+
+        res += "'" + value + "'";
+        if(debug) res += "(" + varTypeToString(type) + ")";
+        if(!loc.empty()) res += "@" + loc;
+
+        return res;
     }
 };
 
@@ -82,33 +93,15 @@ struct IRInstruction {
     Value src2;
 
     std::string str() const {
-        auto format = [](const Value &v) -> std::string {
-            if (v.value.empty())
-                return "";
+        std::string res;
 
-            std::string out;
-            bool is_temp = v.value[0] == 't' && std::isdigit(v.value[1]);
-            if (!is_temp) {
-                out += "'" + v.value + "'";
-            } else {
-                out += v.value;
-            }
-
-            if (!v.loc.empty()) {
-                out += "@" + v.loc;
-            }
-
-            return out;
-        };
-
-        std::string res = format(result) + " <- " + op;
-
+        res += op + ": ";
+        res += "dst: " + result.str();
         if (!src1.value.empty()) {
-            res += " " + format(src1);
+            res += ", src1: " + src1.str();
         }
-
         if (!src2.value.empty()) {
-            res += ", " + format(src2);
+            res += ", src2:" + src2.str();
         }
 
         return res;
@@ -121,28 +114,51 @@ struct IRInstruction {
 class IR_Codegen {
 public:
     // Takes ownership or reference to AST root
-    explicit IR_Codegen(ASTNode* ast_root,
-                       SymbolTable& symbolTable)
-        : ast_root(ast_root), symbolTable(symbolTable){
-        current_function.name = "<global>"; // Default function name
-        };
+  explicit IR_Codegen(ASTNode *ast_root, SymbolTable& table)
+      : symbols(table), ast_root(ast_root)  {
+
+    
+    current_function.name = "<global>"; // Default function name
+  };
 
     // Generate IR code from AST
     
-
+    SymbolTable& symbols; // Symbol table for current scope
     
 
 private :
     // external
     ASTNode *ast_root;
-    SymbolTable& symbolTable;
-    std::unordered_map<std::string, Function> functions;
 
-    std::unordered_map<std::string, Value> variable_table;
+    void showScopes() const {
+        std::cout << "Local Symbols:\n";
+        for (const auto &entry : symbols.local_table) {
+            std::cout << entry.second.str();
+        }
+        std::cout << "\nGlobal Symbols:\n";
+        for (const auto &entry : symbols.global_table) {
+            std::cout << entry.second.str();
+        }
+    }
+
+    void showFunctions() const {
+        std::cout << "Defined Functions:\n";
+        for (const auto &entry : symbols.function_table) {
+            const Function &func = entry.second;
+            std::cout << "  " << func.name
+                    << " (return type: " << func.returnType.str()
+                    << ", param count: " << func.paramCount << ")\n";
+        }
+    }
+
+    
 
     // internal
     size_t temp_counter = 0; // gets reset everytime a new function is generated
     size_t local_counter = 0; // gets reset everytime a new function is generated
+
+    size_t id_counter = 0; // used for if while etc labels;
+
     Function current_function; // Current function being processed
 
     
@@ -174,26 +190,35 @@ private :
       emit(instruction);
     }
 
-    std::string getTempOffset(size_t offset);
+    std::string operatorToIR(const std::string& op);
+
+    std::string getTempOffset(size_t offset, size_t size=4) ;
 
     Value generate_tmp();
 
     Value generate_local(const std::string &name);
-    Value generate_param(const std::string &name, size_t index);
+    Value generate_param(const std::string& name, size_t index, Type type);
     Value generate_global(const std::string &name);
 
     // Get generated IR instructions
     
-    std::string getPARAMLocation(size_t index);
-    std::string getLocalLocation(size_t index);
+    std::string getPARAMLocation(size_t index, size_t size=4);
+    std::string getLocalLocation(size_t index, size_t size=4);
     
     Value generate_FunctionDecl(const ASTNode* func);
+    Value genererate_returnStmt(const ASTNode *node);
     Value generate_CompoundStmt(const ASTNode *node);
     Value generate_BinaryExpr(const ASTNode *node);
+    Value generate_UnaryExpr(const ASTNode *node);
+    Value generate_IfStmt(const ASTNode *node);
+    Value generate_WhileStmt(const ASTNode *node);
+    Value generate_CallExpr(const ASTNode *node);
     Value generate_Literal(const ASTNode *node);
     Value generate_Identifier(const ASTNode *node);
     Value generate_Assignment(const ASTNode *node);
     Value generate_Declaration(const ASTNode *node);
+    Value generate_ArraySubscripting(const ASTNode *node);
+    
 
     Value generate_code(ASTNode* node);
     

@@ -1,11 +1,9 @@
 
-
 int main(){
 
+    char* string = "Hello, World!";
 
-    int a = 5;
-    int b = 10;
-    int c = 10;
+    char ptr = string[5];
 
-    a + b + c + 123;
+    return 0;
 }

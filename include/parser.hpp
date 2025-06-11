@@ -5,6 +5,7 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
+
 #include "utils.hpp"
 #include "defs.hpp"
 #include "lexer.hpp"
@@ -17,9 +18,18 @@ struct Type{
     int pointerLevel = 0;
     std::vector<int> arrayDimensions; // e.g. int arr[5][6] -> (5,6)
 
+    bool operator==(const Type& other) const {
+        return base == other.base && pointerLevel == other.pointerLevel; // Add more fields if needed
+    }
+    bool operator!=(const Type& other) const {
+        return !(*this == other);
+    }
+
     std::string str() const {
         std::string out;
         for (int i = 0; i < pointerLevel; ++i) out += "*";
+
+
         if (base == BT_STRUCT || base == BT_ENUM || base == BT_TYPEDEF_NAME) {
             out += name;
         } else {
@@ -61,105 +71,109 @@ inline std::string kindToStr(SymbolKind kind){
     }
 }
 
+struct Value;
 
 struct Symbol{
     SymbolKind kind;
     std::string name;
     Type typeInfo;
-    std::string owningScopeName; // e.g. "foo" "main", "" for global scope
+
+    Function scope;
+
+    std::string loc; // e.g. "eax", "[ebp - 4]", etc.
 
     std::string str() const {
         return   "  " + name
                + " (kind: " + kindToStr(kind) + ")"
                + " type: " + typeInfo.str()
-               + " scope: " + (owningScopeName.empty() ? "<global>" : owningScopeName)
+               + " scope: " + (scope.name.empty() ? "<global>" : scope.name)
                + "\n";
     }
 };
 
 class Parser;
 
-class SymbolTable{
-public:
-    SymbolTable() {
-        enterScope();
-    }
+// class SymbolTable{
+// public:
+//     SymbolTable() {
+//         enterScope();
+//     }
 
 
-    void enterScope();
-    void exitScope();
-    void define(const Symbol& sym);
-    void define(SymbolKind kind, const std::string& name);
-    bool isTypedef(const std::string& name) const;
-    bool isDefined(const std::string& name) const;
-    SymbolKind getKind(const std::string& name) const;
-
-    
-
-    void showScopes() {
-        int scopeLevel = scopes.size();
-        for (auto it = scopes.rbegin(); it != scopes.rend(); ++it) {
-            std::cout << "Scope level " << --scopeLevel << ":\n";
-            for (const auto& entry : *it) {
-                const Symbol& sym = entry.second;
-                std::cout << sym.str();
-            }
-        }
-    }
-
-    void showFunctions() {
-        std::cout << "Defined functions:\n";
-        for (auto it = functions.begin(); it != functions.end(); ++it) {
-            const std::string& name = it->first;
-            const Function& func = it->second;
-            std::cout << "  " << name << " (return type: " << func.returnType.str() 
-                      << ", param count: " << func.paramCount << ")\n";
-        }
-    }
-
-    bool hasSymbol(const std::string& name) const {
-        for (auto it = scopes.rbegin(); it != scopes.rend(); ++it) {
-            auto found = it->find(name);
-            if (found != it->end()) return true;
-        }
-        return false;
-    }
-
-    Symbol getSymbol(const std::string& name) const {
-        for (auto it = scopes.rbegin(); it != scopes.rend(); ++it) {
-            auto found = it->find(name);
-            if (found != it->end()) return found->second;
-        }
-        // std::cerr << "SymbolTable Error: symbol '" << name << "' not found.\n";
-        // std::exit(1); // or throw an exception
-        return Symbol{SYM_VARIABLE, name, Type(), ""}; // return an empty symbol or handle it as you prefer
-    }
-
-
-    void defineFunction(Function& func){
-        functions[func.name] = func;
-    }
-
-    Function getFunction(const std::string& name) const {
-        auto it = functions.find(name);
-        if (it == functions.end()) {
-            std::cerr << "SymbolTable Error: function '" << name << "' not defined.\n";
-            std::exit(1); // or throw std::runtime_error if you prefer exceptions
-        }
-        return it->second;
-    }
-
-    bool hasFunction(const std::string& name) const {
-        return functions.find(name) != functions.end();
-    }
-
-    std::unordered_map<std::string, Function> functions;
-
-    std::vector<std::unordered_map<std::string, Symbol>> scopes;
-
+//     void enterScope();
+//     void exitScope();
+//     void define(const Symbol& sym);
+//     void define(SymbolKind kind, const std::string& name);
+//     bool isTypedef(const std::string& name) const;
+//     bool isDefined(const std::string& name) const;
+//     SymbolKind getKind(const std::string& name) const;
 
     
-};
+
+//     void showScopes() {
+//         int scopeLevel = scopes.size();
+//         for (auto it = scopes.rbegin(); it != scopes.rend(); ++it) {
+//             std::cout << "Scope level " << --scopeLevel << ":\n";
+//             for (const auto& entry : *it) {
+//                 const Symbol& sym = entry.second;
+//                 std::cout << sym.str();
+//             }
+//         }
+//     }
+
+//     void showFunctions() {
+//         std::cout << "Defined functions:\n";
+//         for (auto it = functions.begin(); it != functions.end(); ++it) {
+//             const std::string& name = it->first;
+//             const Function& func = it->second;
+//             std::cout << "  " << name << " (return type: " << func.returnType.str() 
+//                       << ", param count: " << func.paramCount << ")\n";
+//         }
+//     }
+
+//     bool hasSymbol(const std::string& name) const {
+//         for (auto it = scopes.rbegin(); it != scopes.rend(); ++it) {
+//             auto found = it->find(name);
+//             if (found != it->end()) return true;
+//         }
+//         return false;
+//     }
+
+//     Symbol getSymbol(const std::string& name) const {
+//         for (auto it = scopes.rbegin(); it != scopes.rend(); ++it) {
+//             auto found = it->find(name);
+//             if (found != it->end()) return found->second;
+//         }
+//         // std::cerr << "SymbolTable Error: symbol '" << name << "' not found.\n";
+//         // std::exit(1); // or throw an exception
+//         return Symbol{SYM_VARIABLE, name, Type(), ""}; // return an empty symbol or handle it as you prefer
+//     }
+
+
+//     void defineFunction(Function& func){
+//         functions[func.name] = func;
+//     }
+
+//     Function getFunction(const std::string& name) const {
+//         auto it = functions.find(name);
+//         if (it == functions.end()) {
+//             std::cerr << "SymbolTable Error: function '" << name << "' not defined.\n";
+//             std::exit(1); // or throw std::runtime_error if you prefer exceptions
+//         }
+//         return it->second;
+//     }
+
+//     bool hasFunction(const std::string& name) const {
+//         return functions.find(name) != functions.end();
+//     }
+
+//     std::unordered_map<std::string, Function> functions;
+
+//     std::vector<std::unordered_map<std::string, Symbol>> scopes;
+
+
+    
+// };
 
 class ASTNode{
 public:
@@ -211,22 +225,134 @@ public:
     Type typeInfo;
 };
 
+class SymbolTable{
+public:
+    std::unordered_map<std::string, Symbol> local_table;
+    std::unordered_map<std::string, Function> function_table;
+    std::unordered_map<std::string, Symbol> global_table;
+
+    Symbol getLocalSymbol(const std::string &name, Function& currentFunction) const {
+      auto it = local_table.find(name);
+      if (it != local_table.end())
+        return it->second;
+      std::cerr << ("Local symbol '" + name +
+            "' not found in scope: " + currentFunction.name);
+      return Symbol{SYM_VARIABLE, name, Type(),
+                    {""}}; // return empty symbol if not found
+    }
+
+    Symbol getGlobalSymbol(const std::string &name) const {
+      auto it = global_table.find(name);
+      if (it != global_table.end())
+        return it->second;
+      std::cerr << ("Global symbol '" + name + "' not found.");
+      return Symbol{SYM_VARIABLE, name, Type(),
+                    {""}}; // return empty symbol if not found
+    }
+
+    Symbol getSymbol(const std::string &name, Function& currentFunction) const {
+      if (local_table.count(name))
+        return local_table.at(name);
+      if (global_table.count(name))
+        return global_table.at(name);
+      std::cerr << ("Symbol '" + name +
+            "' not found in any scope: " + currentFunction.name + "\n");
+      return Symbol{SYM_VARIABLE, name, Type(),
+                    {""}}; // return empty symbol if not found
+    }
+
+    Function getFunction(const std::string &name) const {
+      auto it = function_table.find(name);
+      if (it != function_table.end())
+        return it->second;
+      return Function{name, Type(), 0}; // return empty function if not found
+    }
+
+    void defineLocalSymbol(const Symbol &sym, Function &currentFunction) {
+    //   if (local_table.find(sym.name) != local_table.end()) {
+    //     std::cerr << "Local symbol '" + sym.name +
+    //           "' is already defined in this scope: " + currentFunction.name;
+    //   }
+      local_table[sym.name] = sym;
+    }
+
+    void defineGlobalSymbol(const Symbol &sym) {
+    //   if (global_table.find(sym.name) != global_table.end()) {
+    //     std::cerr << "Global symbol '" + sym.name + "' is already defined.";
+    //   }
+
+      global_table[sym.name] = sym;
+    }
+
+    void defineFunction(const Function &func) {
+    //   if (function_table.find(func.name) != function_table.end()) {
+    //     std::cerr << "Function '" + func.name + "' is already defined.";
+    //   }
+
+      function_table[func.name] = func;
+    }
+
+    bool isDefined(const std::string &name) const {
+      return local_table.count(name) || global_table.count(name) ||
+             function_table.count(name);
+    }
+
+    bool isTypedef(const std::string &name) const {
+        return (local_table.count(name) &&
+                 local_table.at(name).kind == SYM_TYPEDEF) ||
+             (global_table.count(name) &&
+                 global_table.at(name).kind == SYM_TYPEDEF);
+    }
+
+    bool isFunction(const std::string &name) const {
+        return function_table.count(name) > 0;
+    }
+
+    bool isVariable(const std::string &name) const {
+        return  (local_table.count(name) &&
+                (local_table.at(name).kind == SYM_VARIABLE)) ||
+                (global_table.count(name) &&
+                (global_table.at(name).kind == SYM_VARIABLE));
+    }
+
+    void showSymbols() const {
+        std::cout << "Local Symbols:\n";
+        for (const auto &entry : local_table) {
+            std::cout << entry.second.str();
+        }
+        std::cout << "\nGlobal Symbols:\n";
+        for (const auto &entry : global_table) {
+            std::cout << entry.second.str();
+        }
+    }
+
+    void showFunctions() const {
+        std::cout << "Defined Functions:\n";
+        for (const auto &entry : function_table) {
+            const Function &func = entry.second;
+            std::cout << "  " << func.name
+                      << " (return type: " << func.returnType.str()
+                      << ", param count: " << func.paramCount << ")\n";
+        }
+    }
+};
+
 class Parser{
 public:
     explicit Parser(std::vector<Token> tokens) : tokens(tokens),  pos(0) {}
     
     ASTNode* parseProgram();         // Entry point
 
-    void printAST(){
+    void printAST() const {
         std::cout << root->str() << std::endl;
     }
     
-    void error(const std::string& msg) {
+    void error(const std::string& msg) const {
         std::cerr << "Parser Error: " << msg << "\n";
         std::cerr << "At token position: " << pos;
 
         if (pos < tokens.size()) {
-            Token& tok = tokens[pos];
+            Token tok = tokens[pos];
             std::cerr << " → Token: " << tok.str();
 
             // Optional: if your Token has line/col info, print it
@@ -243,20 +369,49 @@ public:
         printAST();
 
         std::cerr << "\nSymbol Table:\n";
-        symbols.showScopes();
-        symbols.showFunctions();
+        std::cerr << "Local Symbols:\n";
+        for (auto it = symbols.local_table.begin();
+             it != symbols.local_table.end(); ++it) {
+          std::cerr << it->second.str();
+        }
+        std::cerr << "\nGlobal Symbols:\n";
+        for (auto it = symbols.global_table.begin();
+             it != symbols.global_table.end(); ++it) {
+          std::cerr << it->second.str();
+        }
+        std::cerr << "\nDefined Functions:\n";
+        for (auto it = symbols.function_table.begin();
+             it != symbols.function_table.end(); ++it) {
+          std::cerr << "  " << it->second.name
+                    << " (return type: " << it->second.returnType.str()
+                    << ", param count: " << it->second.paramCount << ")\n";
+        }
 
         exit(1);
     }
-    
-    SymbolTable symbols;
 
-private:
+    
+
+    
+
+    
+    SymbolTable symbols; // Symbol table for current scope
+
+  private:
     std::vector<Token> tokens;
     size_t pos;
     ASTNode* root;
 
-    std::string currentScopeName=""; // "" for global scope, otherwise the function name
+
+    void defineSymbol(const Symbol& sym){
+        if(currentFunction.name == "<global>"){
+            symbols.defineGlobalSymbol(sym);
+        } else {
+            symbols.defineLocalSymbol(sym, currentFunction);
+        }
+    }
+
+    Function currentFunction; // Current function being parsed
 
     TypeSpecifier getTypeSpec(const std::string& str);
     bool isTypeSpecifierStart();

@@ -8,67 +8,6 @@
 
 #include "../include/parser.hpp"
 
-void SymbolTable::enterScope() {
-    scopes.emplace_back();
-}
-
-void SymbolTable::exitScope() {
-    if (!scopes.empty()) {
-        scopes.pop_back();
-    }
-}
-
-void SymbolTable::define(const Symbol& sym) {
-    if (scopes.empty()) enterScope();
-
-    // made problems because of functions
-
-    // std::unordered_map<std::string, Symbol>& current = scopes.back();
-
-    // if(current.count(sym.name)){
-    //     std::cerr << "SymbolTable Error: '" << sym.name << "' is already defined in this scope.";
-    //     exit(1);
-    // }
-
-
-    scopes.back()[sym.name] = sym;
-}
-
-void SymbolTable::define(SymbolKind kind, const std::string& name) {
-    Symbol sym;
-
-    sym.kind = kind;
-    sym.name = name;
-
-    define(sym);
-}
-
-bool SymbolTable::isTypedef(const std::string& name) const {
-    for (auto it = scopes.rbegin(); it != scopes.rend(); ++it) {
-        auto found = it->find(name);
-        if (found != it->end()) {
-            return found->second.kind == SymbolKind::SYM_TYPEDEF;
-        }
-    }
-    return false;
-}
-
-bool SymbolTable::isDefined(const std::string& name) const {
-    for (auto it = scopes.rbegin(); it != scopes.rend(); ++it) {
-        if (it->find(name) != it->end()) return true;
-    }
-    return false;
-}
-
-SymbolKind SymbolTable::getKind(const std::string& name) const {
-    for (auto it = scopes.rbegin(); it != scopes.rend(); ++it) {
-        auto found = it->find(name);
-        if (found != it->end()) {
-            return found->second.kind;
-        }
-    }
-    return SymbolKind::SYM_VARIABLE; // default fallback or you can throw
-}
 
 Token Parser::peek(size_t off) {
     if (isAtEnd(off)) return Token(TokenType::END_OF_FILE, "");
@@ -174,9 +113,21 @@ bool Parser::isTypeSpecifierStart() {
     if (peek().type == TokenType::KEYWORD) {
         if (getTypeSpec(peek().value) != TS_NONE) return true;
         if (peek().kw_type == KEYWORD_STRUCT || peek().kw_type == KEYWORD_ENUM) return true;
-        if(symbols.isDefined(peek().value)) return true;
-    }else if (symbols.isTypedef(peek().value)) {
-        return true;
+        // Check typedefs in local and global tables
+        if (symbols.local_table.count(peek().value) &&
+            symbols.local_table[peek().value].kind == SYM_TYPEDEF)
+          return true;
+        if (symbols.global_table.count(peek().value) &&
+            symbols.global_table[peek().value].kind == SYM_TYPEDEF)
+          return true;
+    } else {
+        // Check typedefs in local and global tables
+        if (symbols.local_table.count(peek().value) &&
+            symbols.local_table[peek().value].kind == SYM_TYPEDEF)
+          return true;
+        if (symbols.global_table.count(peek().value) &&
+            symbols.global_table[peek().value].kind == SYM_TYPEDEF)
+          return true;
     }
     return false;
 }
@@ -205,7 +156,9 @@ ASTNode* Parser::parseFunctionDecl(){
     
     if(!match(LPAREN)) error("Expected '(' after function name");
 
-    currentScopeName = funcName->value; // for the locals and parameters
+    currentFunction.name = funcName->value;
+    currentFunction.returnType = returnType->typeInfo;
+    currentFunction.paramCount = 0; // will be set later
     
 
     ASTNode* paramList = new ASTNode(NT_ParamList);
@@ -231,6 +184,7 @@ ASTNode* Parser::parseFunctionDecl(){
     funcStruct.name = funcName->value;
     funcStruct.returnType = returnType->typeInfo;
     funcStruct.paramCount = paramList->children.size();
+    
 
     symbols.defineFunction(funcStruct);
 
@@ -243,7 +197,10 @@ ASTNode* Parser::parseFunctionDecl(){
         error("Expected '{' for function body or ';' for declaration end");
     }
 
-    currentScopeName = ""; // back to global scope
+
+    currentFunction.name = "<global>";
+    currentFunction.returnType.base = BT_VOID;
+
 
     return func;
 }
@@ -309,10 +266,11 @@ ASTNode* Parser::parseEnumDecl() {
         Symbol enumMember;
         enumMember.kind = SYM_ENUM_MEMBER;
         enumMember.name = name;
-        enumMember.owningScopeName = currentScopeName;
+        enumMember.scope = currentFunction; // Current function scope
         enumMember.typeInfo.base = BT_INT;
 
-        symbols.define(enumMember);
+        defineSymbol(enumMember);
+        
 
         if (match(ASSIGN)) {
             ASTNode* valueExpr = parseExpression();
@@ -357,7 +315,17 @@ ASTNode* Parser::parseTypedefDecl(){
     // ASTNode* name = parseIdentifier();
     // expect(SEMICOLON);
 
-    symbols.define(SYM_TYPEDEF, name->value);
+    if(currentFunction.name != "<global>"){
+        error("Typedefs can only be defined in global scope");
+    }
+
+    
+    Symbol sym;
+    sym.kind = SYM_TYPEDEF;
+    sym.name = name->value;
+    sym.typeInfo = decl->typeInfo; // Use the type info from the declaration
+    sym.scope = currentFunction; // Current function scope
+    symbols.defineGlobalSymbol(sym);
 
     // ASTNode* typedefNode = new ASTNode(NT_Declaration);
     // typedefNode->addChild(type);
@@ -387,6 +355,8 @@ BaseType primTypeStrToBaseType(std::string str){
 
 ASTNode* Parser::parseTypeSpecifier(){
     ASTNode* node = nullptr;
+
+    
 
     if (symbols.isTypedef(peek().value)) {
         node = new ASTNode(NT_TypeSpecifier, advance().value);
@@ -452,11 +422,13 @@ ASTNode* Parser::parseTypeSpecifier(){
 
             while(match(STAR)){
                 type->typeInfo.pointerLevel++;
+                
 
                 ASTNode* ptr = new ASTNode(NT_PointerType);
                 ptr->addChild(type);
                 type = ptr;
             }
+            
             return type;
         }
     }
@@ -488,9 +460,10 @@ ASTNode* Parser::parseParameter(){
     parameterSym.name = ident->value;
     parameterSym.typeInfo = typespec->typeInfo;
 
-    parameterSym.owningScopeName = currentScopeName;
+    parameterSym.scope = currentFunction;
 
-    symbols.define(parameterSym);
+    defineSymbol(parameterSym);
+    currentFunction.paramCount++;
 
     return parameter;
 }
@@ -694,8 +667,6 @@ ASTNode* Parser::parseVarDecl(){
         decl->addChild(initNode);
     }
 
-    Symbol oldSym = symbols.getSymbol(name->getValue());
-
     
 
 
@@ -713,10 +684,10 @@ ASTNode* Parser::parseVarDecl(){
     sym.name = baseNameNode->getValue();
     sym.typeInfo = typeInfo;
 
-    sym.owningScopeName = currentScopeName;
+    sym.scope = currentFunction;
 
     // Now insert
-    symbols.define(sym);
+    defineSymbol(sym);
 
 
     expect(SEMICOLON);
@@ -849,8 +820,10 @@ bool Parser::isConstantExpression(ASTNode* node){
         case NT_Identifier:
             // Could be constant if it's an enum value or a #define (not implemented yet)
             if (symbols.isDefined(node->getValue())) {
-                Symbol sym = symbols.getSymbol(node->getValue());
-                return sym.kind == SYM_TYPEDEF || sym.kind == SYM_ENUM_MEMBER; // You may want SYM_CONSTANT or SYM_ENUM_MEMBER here!
+              Symbol sym = symbols.getSymbol(node->getValue(), currentFunction);
+              return sym.kind == SYM_TYPEDEF ||
+                     sym.kind == SYM_ENUM_MEMBER; // You may want SYM_CONSTANT
+                                                  // or SYM_ENUM_MEMBER here!
             }
             return false;
 
@@ -1090,16 +1063,21 @@ ASTNode* Parser::parseAtom() {
 
         // Look up the identifier in symbol table and assign type
         if (symbols.isDefined(tok.value)) {
-            SymbolKind kind = symbols.getKind(tok.value);
+            Symbol sym = symbols.getSymbol(tok.value, currentFunction);
+            SymbolKind kind = sym.kind;
 
-            if (kind == SYM_VARIABLE 
+            if(peek().type == TokenType::LBRACKET){
+                node->typeInfo.base = BT_ARRAY;
+            }
+
+            else if (kind == SYM_VARIABLE 
                 || kind == SYM_TYPEDEF 
                 || kind == SYM_FUNCTION 
                 || kind == SYM_PARAMETER 
                 || kind == SYM_ENUM_MEMBER
             ) {
                 
-                Symbol sym = symbols.getSymbol(tok.value);
+                Symbol sym = symbols.getSymbol(tok.value, currentFunction);
                 node->typeInfo = sym.typeInfo;
                 
             }
@@ -1179,20 +1157,21 @@ ASTNode* Parser::parsePrimary() {
             arrSub->addChild(expr);
             arrSub->addChild(index);
 
-            arrSub->typeInfo = expr->typeInfo;
+            arrSub->typeInfo.base = BT_ARRAY;
 
-            if (!arrSub->typeInfo.arrayDimensions.empty()) {
-                arrSub->typeInfo.arrayDimensions.erase(
-                    arrSub->typeInfo.arrayDimensions.begin()
-                );
-            } else {
-                // Not an array? Fallback — treat as pointer dereference
-                if (arrSub->typeInfo.pointerLevel > 0) {
-                    arrSub->typeInfo.pointerLevel--;
-                } else {
-                    arrSub->typeInfo.base = BT_UNKNOWN;
-                }
-            }
+            // how should array Dimensions already be filled? this is something done in IR generation or later even
+            // if (!arrSub->typeInfo.arrayDimensions.empty()) {
+            //     arrSub->typeInfo.arrayDimensions.erase(
+            //         arrSub->typeInfo.arrayDimensions.begin()
+            //     );
+            // } else {
+            //     // Not an array? Fallback — treat as pointer dereference
+            //     if (arrSub->typeInfo.pointerLevel > 0) {
+            //         arrSub->typeInfo.pointerLevel--;
+            //     } else {
+            //         arrSub->typeInfo.base = BT_UNKNOWN;
+            //     }
+            // }
 
             expr = arrSub;
         }
