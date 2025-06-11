@@ -444,6 +444,8 @@ public:
     ASTNode* parseTypeCastExpr();
     // ASTNode* parsePostFixExpr();
     ASTNode* parseUnaryExpr();
+    ASTNode* parseTernaryExpr();
+    
 
     int getPrecedence(TokenType type);
     bool isRightAssociative(TokenType type);

@@ -886,6 +886,10 @@ ASTNode* Parser::parseExpression() {
     if (peek().type == TokenType::LPAREN && getTypeSpec(peek(1).value) != TS_NONE) {
         return parseTypeCastExpr();
     }
+
+    if(peek().type == TokenType::QUESTION){
+        return parseTernaryExpr();
+    }
     
     if (
         peek().type == TokenType::MINUS || 
@@ -947,6 +951,10 @@ ASTNode* Parser::parseUnaryExpr(){
     node->addChild(operand);
     node->typeInfo = operand->typeInfo;
     return node;
+}
+
+ASTNode* Parser::parseTernaryExpr() {
+    
 }
 
 int Parser::getPrecedence(TokenType type) {

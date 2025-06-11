@@ -1,9 +1,7 @@
 
-int main(){
+int main(int b){
 
-    char* string = "Hello, World!";
-
-    char ptr = string[5];
+    int a = (b > 0) ? 123 : 345;
 
     return 0;
 }

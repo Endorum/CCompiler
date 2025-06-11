@@ -1,9 +1,7 @@
 
-int main(){
+int main(int b){
 
-    char* string = "Hello, World!";
-
-    char ptr = string[5];
+    int a = (b > 0) ? 123 : 345;
 
     return 0;
 }
@@ -11,64 +9,27 @@ int main(){
 0: Keyword: int
 1: identifier : 'main'
 2: lparen : '('
-3: rparen : ')'
-4: lbrace : '{'
-5: Keyword: char
-6: star : '*'
-7: identifier : 'string'
-8: assign : '='
-9: string_literal : 'Hello, World!'
-10: semicolon : ';'
-11: Keyword: char
-12: identifier : 'ptr'
-13: assign : '='
-14: identifier : 'string'
-15: lbracket : '['
-16: integer_literal : '5'
-17: rbracket : ']'
-18: semicolon : ';'
-19: Keyword: return
-20: integer_literal : '0'
-21: semicolon : ';'
-22: rbrace : '}'
-23: end_of_file : 'EOF'
+3: Keyword: int
+4: identifier : 'b'
+5: rparen : ')'
+6: lbrace : '{'
+7: Keyword: int
+8: identifier : 'a'
+9: assign : '='
+10: lparen : '('
+11: identifier : 'b'
+12: gt : '>'
+13: integer_literal : '0'
+14: rparen : ')'
+15: question : '?'
+16: integer_literal : '123'
+17: colon : ':'
+18: integer_literal : '345'
+19: semicolon : ';'
+20: Keyword: return
+21: integer_literal : '0'
+22: semicolon : ';'
+23: rbrace : '}'
+24: end_of_file : 'EOF'
 Program type info: Unknown Type: 12 
-    FunctionDecl type info: int 
-        TypeSpecifier: 'int' type info: int 
-        Identifier: 'main' type info: Unknown Type: 12 
-        ParamList type info: Unknown Type: 12 
-        CompoundStmt type info: Unknown Type: 12 
-            Declaration type info: Unknown Type: 12 
-                PointerType type info: Unknown Type: 12 
-                    TypeSpecifier: 'char' type info: *char 
-                Identifier: 'string' type info: Unknown Type: 12 
-                Initilizer type info: *char[13] 
-                    Literal: 'Hello, World!' type info: *char[13] 
-            Declaration type info: char 
-                TypeSpecifier: 'char' type info: char 
-                Identifier: 'ptr' type info: Unknown Type: 12 
-                Initilizer type info: array 
-                    ArraySubscripting type info: array 
-                        Identifier: 'string' type info: array 
-                        Literal: '5' type info: int 
-            ReturnStmt type info: int 
-                Literal: '0' type info: int 
 
-Local Symbols:
-  ptr (kind: variable) type: char scope: main
-  string (kind: variable) type: *char scope: main
-
-Global Symbols:
-Defined Functions:
-  main (return type: int, param count: 0)
-
-
-Generated IR Instructions:
-label: dst: 'main'@L_main
-load_string: dst: 't0'@ebx, src1: 'Hello, World!'
-assign: dst: 'string'@[ebp - 4], src1: 't0'@ebx
-add: dst: 't1'@ecx, src1: 'string'@[ebp - 4], src2:'5'
-dereference: dst: 't1'@ecx, src1: 't1'@ecx
-assign: dst: 'ptr'@[ebp - 8], src1: 't1'@ecx
-assign: dst: 'eax'@eax, src1: '0'
-return: dst: 
