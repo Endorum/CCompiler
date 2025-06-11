@@ -162,6 +162,8 @@ private:
             std::cout << "(no tokens emitted yet)" << std::endl;
         }
 
+        
+
         exit(1);
     }
 

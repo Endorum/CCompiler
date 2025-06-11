@@ -40,28 +40,52 @@ struct Function{
     size_t paramCount;
 };
 
-
-
-enum SymbolKind{
-    SYM_TYPEDEF,
-    SYM_VARIABLE,
-    SYM_FUNCTION,
-    SYM_PARAMETER,
-    SYM_ENUM_MEMBER,
+enum SymbolKind {
+  SYM_TYPEDEF,
+  SYM_VARIABLE,
+  SYM_FUNCTION,
+  SYM_PARAMETER,
+  SYM_ENUM_MEMBER,
+  SYM_STRUCT_MEMBER,
 };
+
+inline std::string kindToStr(SymbolKind kind){
+    switch (kind) {
+        case SYM_TYPEDEF: return "typedef";
+        case SYM_VARIABLE: return "variable";
+        case SYM_FUNCTION: return "function";
+        case SYM_PARAMETER: return "parameter";
+        case SYM_ENUM_MEMBER: return "enum member";
+        case SYM_STRUCT_MEMBER: return "struct member";
+        default: return "unknown";
+    }
+}
+
 
 struct Symbol{
     SymbolKind kind;
     std::string name;
     Type typeInfo;
     std::string owningScopeName; // e.g. "foo" "main", "" for global scope
+
+    std::string str() const {
+        return   "  " + name
+               + " (kind: " + kindToStr(kind) + ")"
+               + " type: " + typeInfo.str()
+               + " scope: " + (owningScopeName.empty() ? "<global>" : owningScopeName)
+               + "\n";
+    }
 };
+
+class Parser;
 
 class SymbolTable{
 public:
-    SymbolTable(){
+    SymbolTable() {
         enterScope();
     }
+
+
     void enterScope();
     void exitScope();
     void define(const Symbol& sym);
@@ -70,15 +94,7 @@ public:
     bool isDefined(const std::string& name) const;
     SymbolKind getKind(const std::string& name) const;
 
-    std::string kindToStr(SymbolKind kind){
-        switch (kind) {
-            case SYM_TYPEDEF: return "typedef";
-            case SYM_VARIABLE: return "variable";
-            case SYM_FUNCTION: return "function";
-            case SYM_PARAMETER: return "parameter";
-            case SYM_ENUM_MEMBER: return "enum member";
-        }
-    }
+    
 
     void showScopes() {
         int scopeLevel = scopes.size();
@@ -86,12 +102,18 @@ public:
             std::cout << "Scope level " << --scopeLevel << ":\n";
             for (const auto& entry : *it) {
                 const Symbol& sym = entry.second;
-                std::cout   << "  " << sym.name
-                            << " (kind: " << kindToStr(sym.kind) << ")"
-                            << " type: " << sym.typeInfo.str()
-                            << " scope: " << (sym.owningScopeName.empty() ? "<global>" : sym.owningScopeName)
-                            << "\n";
+                std::cout << sym.str();
             }
+        }
+    }
+
+    void showFunctions() {
+        std::cout << "Defined functions:\n";
+        for (auto it = functions.begin(); it != functions.end(); ++it) {
+            const std::string& name = it->first;
+            const Function& func = it->second;
+            std::cout << "  " << name << " (return type: " << func.returnType.str() 
+                      << ", param count: " << func.paramCount << ")\n";
         }
     }
 
@@ -108,8 +130,9 @@ public:
             auto found = it->find(name);
             if (found != it->end()) return found->second;
         }
-        // Optional: throw an error or return dummy symbol
-        return Symbol{SYM_VARIABLE, name, Type{BT_UNKNOWN}};
+        // std::cerr << "SymbolTable Error: symbol '" << name << "' not found.\n";
+        // std::exit(1); // or throw an exception
+        return Symbol{SYM_VARIABLE, name, Type(), ""}; // return an empty symbol or handle it as you prefer
     }
 
 
@@ -132,8 +155,8 @@ public:
 
     std::unordered_map<std::string, Function> functions;
 
-private:    
     std::vector<std::unordered_map<std::string, Symbol>> scopes;
+
 
     
 };
@@ -190,7 +213,7 @@ public:
 
 class Parser{
 public:
-    explicit Parser(std::vector<Token> tokens) : tokens(tokens), pos(0) {}
+    explicit Parser(std::vector<Token> tokens) : tokens(tokens),  pos(0) {}
     
     ASTNode* parseProgram();         // Entry point
 
@@ -218,6 +241,10 @@ public:
 
         std::cerr << "\nPartial AST:\n";
         printAST();
+
+        std::cerr << "\nSymbol Table:\n";
+        symbols.showScopes();
+        symbols.showFunctions();
 
         exit(1);
     }

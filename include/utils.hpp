@@ -128,6 +128,7 @@ inline std::string nodeTypeToString(NodeType type){
         case NT_Parameter: return "Parameter";
         case NT_CompoundStmt: return "CompoundStmt";
         case NT_Declaration: return "Declaration";
+        case NT_TypedefDeclaration: return "TypedefDeclaration";
         case NT_Assignment: return "Assignment";
         case NT_IfStmt: return "IfStmt";
         case NT_WhileStmt: return "WhileStmt";

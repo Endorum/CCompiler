@@ -1,9 +1,10 @@
+#include <ostream>
 
 #include "../include/utils.hpp"
 #include "../include/preproc.hpp"
 #include "../include/lexer.hpp"
 #include "../include/parser.hpp"
-#include <ostream>
+#include "../include/ir_codegen.hpp"
 
 int main(){
 
@@ -23,11 +24,25 @@ int main(){
 
 
     Parser parser(lexer.getTokens());
+
     ASTNode* root = parser.parseProgram();
 
     std::cout << root->str() << std::endl;
-
     parser.symbols.showScopes();
+    parser.symbols.showFunctions();
+
+
+    IR_Codegen irGen(root, parser.symbols);
+    irGen.generate();
+
+    const std::vector<IRInstruction>& instructions = irGen.get_instructions();
+    std::cout << "\n\nGenerated IR Instructions:\n";
+    for (const auto& instr : instructions) {
+        std::cout << instr.str() << "\n";
+    }
+
+
+
 
 
     return 0;

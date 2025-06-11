@@ -3,6 +3,8 @@
 #include <exception>
 #include <string>
 #include <sys/errno.h>
+#include <system_error>
+#include <unordered_map>
 
 #include "../include/parser.hpp"
 
@@ -18,12 +20,27 @@ void SymbolTable::exitScope() {
 
 void SymbolTable::define(const Symbol& sym) {
     if (scopes.empty()) enterScope();
+
+    // made problems because of functions
+
+    // std::unordered_map<std::string, Symbol>& current = scopes.back();
+
+    // if(current.count(sym.name)){
+    //     std::cerr << "SymbolTable Error: '" << sym.name << "' is already defined in this scope.";
+    //     exit(1);
+    // }
+
+
     scopes.back()[sym.name] = sym;
 }
 
 void SymbolTable::define(SymbolKind kind, const std::string& name) {
-    if (scopes.empty()) enterScope();
-    scopes.back()[name] = Symbol{kind, name};
+    Symbol sym;
+
+    sym.kind = kind;
+    sym.name = name;
+
+    define(sym);
 }
 
 bool SymbolTable::isTypedef(const std::string& name) const {
@@ -332,7 +349,7 @@ ASTNode* Parser::parseTypedefDecl(){
 
     ASTNode* name = parseIdentifier();
     expect(SEMICOLON);
-    ASTNode* TypedefDecl = new ASTNode(NT_Declaration, "typedef");
+    ASTNode* TypedefDecl = new ASTNode(NT_TypedefDeclaration, "typedef");
     TypedefDecl->addChild(name);
     TypedefDecl->addChild(decl);
 
@@ -402,6 +419,7 @@ ASTNode* Parser::parseTypeSpecifier(){
             return structType;
         }
         if(peek().kw_type == KEYWORD_ENUM){
+
             advance(); 
             if(peek().type != IDENTIFIER) error("Expected enum name in type specifier");
 
@@ -424,8 +442,8 @@ ASTNode* Parser::parseTypeSpecifier(){
         }
         if(peek().kw_type == KEYWORD_TYPEDEF){
             advance();
-
-        }
+            parseTypedefDecl(); // ???
+        }   
         if(getTypeSpec(peek().value) != TS_NONE){
             Token base = advance();
             ASTNode* type = new ASTNode(NT_TypeSpecifier, base.value);
@@ -488,6 +506,19 @@ ASTNode* Parser::parseStatement(){
         return parseCompoundStmt();
     }
 
+
+    if(peek().kw_type == KEYWORD_ENUM){
+        return parseEnumDecl();
+    }
+
+    if(peek().kw_type == KEYWORD_STRUCT){
+        return parseStructDecl();
+    }
+
+    if(peek().kw_type == KEYWORD_TYPEDEF){
+        return parseTypedefDecl();
+    }
+
     // Variable declaration (e.g. int x = 5;) or struct STRUCTNAME <objname>
     if (isTypeSpecifierStart()) {
         return parseVarDecl();
@@ -539,6 +570,7 @@ ASTNode* Parser::parseStatement(){
         return new ASTNode(NT_BreakStmt);
     }
 
+    
     ASTNode* expr = parseExpression();
     if(!expr) error("Expected expression statement");
     expect(SEMICOLON);
@@ -573,7 +605,7 @@ ASTNode* Parser::parseReturnStmt(){
     advance(); // past return kw
     ASTNode* returnNode = new ASTNode(NT_ReturnStmt);
 
-    ASTNode* expr;
+    ASTNode* expr; 
     if(peek().type != SEMICOLON){
         expr = parseExpression();
         if(!expr) error("Expected expression after return");
@@ -1073,7 +1105,7 @@ ASTNode* Parser::parseAtom() {
             }
         } else {
             node->typeInfo.base = BT_UNKNOWN; // unknown identifier — will trigger error later
-            error("Variable " + tok.value + " not defined in current scope: " + ((currentScopeName.empty()) ? "<global>" : currentScopeName));
+            // error("Variable " + tok.value + " not defined in current scope: " + ((currentScopeName.empty()) ? "<global>" : currentScopeName));
         }
 
         return node;
