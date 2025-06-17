@@ -1,466 +1,353 @@
-#pragma once
 
-#include <cstddef>
-#include <ostream>
-#include <string>
-#include <unordered_map>
-#include <vector>
 
-#include "utils.hpp"
 #include "defs.hpp"
 #include "lexer.hpp"
+#include "preproc.hpp"
+#include <cstddef>
+#include <vector>
 
+class Type{
+private:
+    BaseType baseType;
+    Type* child = nullptr; // linked list for multiple pointers
 
+public:
+    Type(BaseType baseType = BT_NONE)
+        : baseType(baseType), child(nullptr) {}
 
-struct Type{
-    BaseType base=BT_UNKNOWN;
-    std::string name=""; // for struct, enum, typedefs empty otherwise
-    int pointerLevel = 0;
-    std::vector<int> arrayDimensions; // e.g. int arr[5][6] -> (5,6)
-
-    bool operator==(const Type& other) const {
-        return base == other.base && pointerLevel == other.pointerLevel; // Add more fields if needed
+    // Copy constructor (deep copy)
+    Type(const Type& other) : baseType(other.baseType), child(nullptr) {
+        if (other.child) {
+            child = new Type(*other.child);
+        }
     }
-    bool operator!=(const Type& other) const {
-        return !(*this == other);
+
+    // Assignment operator (deep copy)
+    Type& operator=(const Type& other){
+        if(this == &other) return *this;
+
+        delete child;
+        baseType = other.baseType;
+        child = other.child ? new Type(*other.child) : nullptr;
+        return *this;
     }
 
-    std::string str() const {
+    ~Type(){
+        delete child;  
+    }
+    
+    void addPointerLevel(size_t amount){
+        for(int i=0;i<amount;i++) addPointerLevel();
+    }
+
+    // Add a pointer level to this type (e.g., int -> int*, int* -> int**)
+    void addPointerLevel() {
+        Type* newChild = new Type(*this);
+        baseType = BT_POINTER;
+        child = newChild;
+    }
+
+    size_t getByteSize(){
+        switch (baseType) {
+            case BT_VOID:       return 0;
+            case BT_CHAR:       return 1;
+            case BT_SHORT:      return 2;
+            case BT_INT:        return 4;
+            case BT_LONG:       return 8;
+            case BT_FLOAT:      return 4;
+            case BT_DOUBLE:     return 8;
+            case BT_SIGNED:     return 4;
+            case BT_UNSIGNED:   return 4;
+            case BT_POINTER:    return 8;
+            default: return -1;
+        }
+    }
+
+    BaseType getBaseType() {
+        if(baseType != BT_POINTER) return baseType;
+        Type* type = this;
+        while(type->baseType == BT_POINTER && type->child){
+            type = type->child;
+        }
+        return type->baseType;
+    }
+
+    std::string str() {
         std::string out;
-        for (int i = 0; i < pointerLevel; ++i) out += "*";
+        std::string stars = "";
 
+        Type* type = this;
 
-        if (base == BT_STRUCT || base == BT_ENUM || base == BT_TYPEDEF_NAME) {
-            out += name;
-        } else {
-            out += baseTypeToString(base);
+        while(type && type->baseType == BT_POINTER){
+            stars += "*";
+            type = type->child;
         }
-        for (int dim : arrayDimensions) {
-            out += "[" + std::to_string(dim) + "]";
-        }
+
+        switch (type ? type->baseType : BT_NONE) {
+            case BT_VOID: out += "void"; break;
+            case BT_CHAR: out += "char"; break;
+            case BT_SHORT: out += "short"; break;
+            case BT_INT: out += "int"; break;
+            case BT_LONG: out += "long"; break;
+            case BT_FLOAT: out += "float"; break;
+            case BT_DOUBLE: out += "double"; break;
+            case BT_SIGNED: out += "signed"; break;
+            case BT_UNSIGNED: out += "unsigned"; break;
+            default: out += "unknown"; break;
+        }   
+
+        out += stars;
+
         return out;
     }
 
 };
 
+class Node{
 
-struct Function{
-    std::string name;
-    Type returnType;
-    size_t paramCount;
-};
+private:
+    NodeType type;
+    std::string value;
+    Type dataType;
 
-enum SymbolKind {
-  SYM_TYPEDEF,
-  SYM_VARIABLE,
-  SYM_FUNCTION,
-  SYM_PARAMETER,
-  SYM_ENUM_MEMBER,
-  SYM_STRUCT_MEMBER,
-};
+    std::vector<Node*> children;
 
-inline std::string kindToStr(SymbolKind kind){
-    switch (kind) {
-        case SYM_TYPEDEF: return "typedef";
-        case SYM_VARIABLE: return "variable";
-        case SYM_FUNCTION: return "function";
-        case SYM_PARAMETER: return "parameter";
-        case SYM_ENUM_MEMBER: return "enum member";
-        case SYM_STRUCT_MEMBER: return "struct member";
-        default: return "unknown";
-    }
-}
-
-struct Value;
-
-struct Symbol{
-    SymbolKind kind;
-    std::string name;
-    Type typeInfo;
-
-    Function scope;
-
-    std::string loc; // e.g. "eax", "[ebp - 4]", etc.
-
-    std::string str() const {
-        return   "  " + name
-               + " (kind: " + kindToStr(kind) + ")"
-               + " type: " + typeInfo.str()
-               + " scope: " + (scope.name.empty() ? "<global>" : scope.name)
-               + "\n";
-    }
-};
-
-class Parser;
-
-// class SymbolTable{
-// public:
-//     SymbolTable() {
-//         enterScope();
-//     }
-
-
-//     void enterScope();
-//     void exitScope();
-//     void define(const Symbol& sym);
-//     void define(SymbolKind kind, const std::string& name);
-//     bool isTypedef(const std::string& name) const;
-//     bool isDefined(const std::string& name) const;
-//     SymbolKind getKind(const std::string& name) const;
-
-    
-
-//     void showScopes() {
-//         int scopeLevel = scopes.size();
-//         for (auto it = scopes.rbegin(); it != scopes.rend(); ++it) {
-//             std::cout << "Scope level " << --scopeLevel << ":\n";
-//             for (const auto& entry : *it) {
-//                 const Symbol& sym = entry.second;
-//                 std::cout << sym.str();
-//             }
-//         }
-//     }
-
-//     void showFunctions() {
-//         std::cout << "Defined functions:\n";
-//         for (auto it = functions.begin(); it != functions.end(); ++it) {
-//             const std::string& name = it->first;
-//             const Function& func = it->second;
-//             std::cout << "  " << name << " (return type: " << func.returnType.str() 
-//                       << ", param count: " << func.paramCount << ")\n";
-//         }
-//     }
-
-//     bool hasSymbol(const std::string& name) const {
-//         for (auto it = scopes.rbegin(); it != scopes.rend(); ++it) {
-//             auto found = it->find(name);
-//             if (found != it->end()) return true;
-//         }
-//         return false;
-//     }
-
-//     Symbol getSymbol(const std::string& name) const {
-//         for (auto it = scopes.rbegin(); it != scopes.rend(); ++it) {
-//             auto found = it->find(name);
-//             if (found != it->end()) return found->second;
-//         }
-//         // std::cerr << "SymbolTable Error: symbol '" << name << "' not found.\n";
-//         // std::exit(1); // or throw an exception
-//         return Symbol{SYM_VARIABLE, name, Type(), ""}; // return an empty symbol or handle it as you prefer
-//     }
-
-
-//     void defineFunction(Function& func){
-//         functions[func.name] = func;
-//     }
-
-//     Function getFunction(const std::string& name) const {
-//         auto it = functions.find(name);
-//         if (it == functions.end()) {
-//             std::cerr << "SymbolTable Error: function '" << name << "' not defined.\n";
-//             std::exit(1); // or throw std::runtime_error if you prefer exceptions
-//         }
-//         return it->second;
-//     }
-
-//     bool hasFunction(const std::string& name) const {
-//         return functions.find(name) != functions.end();
-//     }
-
-//     std::unordered_map<std::string, Function> functions;
-
-//     std::vector<std::unordered_map<std::string, Symbol>> scopes;
-
-
-    
-// };
-
-class ASTNode{
 public:
+    Node() = default;
+    Node(const NodeType type) : type(type) {}
+    Node(const NodeType type, std::string value) :   type(type), value(value) {}
 
-    ASTNode() = default;
-    ASTNode(const NodeType type) : type(type) {}
-    ASTNode(const NodeType type, std::string value) :   value(value), type(type) {}
-
-    void addChild(ASTNode* child){
-        children.push_back(child);
-    }
-
-    NodeType getType() const {return type;}
-    const std::string& getValue() {return value;}
-    const std::vector<ASTNode*> getChildren() const {return children;}
-
-    ~ASTNode(){
+    ~Node(){
         for(auto child : children){
             delete child;
-        }
+        }    
     }
 
-    std::string str(int indent = 0) const {
-        std::string indentation(indent * 4, ' ');
-        std::string output = indentation + nodeTypeToString(type);
-        if (!value.empty()) {
-            output += ": \'" + value + "\'";
-        }
-        bool debug = true;
-        if(!typeInfo.str().empty() && debug) output += " type info: " + typeInfo.str() + " ";
-        output += "\n";
-
-        for (const auto& child : children) {
-            output += child->str(indent + 1);
-        }
-
-        return output;
+    void addChild(Node* node){
+        children.push_back(node);
     }
-    
 
+    std::string str() {
+        std::string out = "";
 
-    std::string value;
-    NodeType type = NT_None;
-    
-    std::vector<ASTNode*> children;
+        out += "Node of type: " + NodeType_str(type);
+
+        if(!value.empty()) out += " value: '" + value + "' ";
+        if(dataType.getBaseType() != BT_NONE) out += " data type: " + dataType.str();
+
+        return out;
+    }
 
     
-
-    Type typeInfo;
-};
-
-class SymbolTable{
-public:
-    std::unordered_map<std::string, Symbol> local_table;
-    std::unordered_map<std::string, Function> function_table;
-    std::unordered_map<std::string, Symbol> global_table;
-
-    Symbol getLocalSymbol(const std::string &name, Function& currentFunction) const {
-      auto it = local_table.find(name);
-      if (it != local_table.end())
-        return it->second;
-      std::cerr << ("Local symbol '" + name +
-            "' not found in scope: " + currentFunction.name);
-      return Symbol{SYM_VARIABLE, name, Type(),
-                    {""}}; // return empty symbol if not found
-    }
-
-    Symbol getGlobalSymbol(const std::string &name) const {
-      auto it = global_table.find(name);
-      if (it != global_table.end())
-        return it->second;
-      std::cerr << ("Global symbol '" + name + "' not found.");
-      return Symbol{SYM_VARIABLE, name, Type(),
-                    {""}}; // return empty symbol if not found
-    }
-
-    Symbol getSymbol(const std::string &name, Function& currentFunction) const {
-      if (local_table.count(name))
-        return local_table.at(name);
-      if (global_table.count(name))
-        return global_table.at(name);
-      std::cerr << ("Symbol '" + name +
-            "' not found in any scope: " + currentFunction.name + "\n");
-      return Symbol{SYM_VARIABLE, name, Type(),
-                    {""}}; // return empty symbol if not found
-    }
-
-    Function getFunction(const std::string &name) const {
-      auto it = function_table.find(name);
-      if (it != function_table.end())
-        return it->second;
-      return Function{name, Type(), 0}; // return empty function if not found
-    }
-
-    void defineLocalSymbol(const Symbol &sym, Function &currentFunction) {
-    //   if (local_table.find(sym.name) != local_table.end()) {
-    //     std::cerr << "Local symbol '" + sym.name +
-    //           "' is already defined in this scope: " + currentFunction.name;
-    //   }
-      local_table[sym.name] = sym;
-    }
-
-    void defineGlobalSymbol(const Symbol &sym) {
-    //   if (global_table.find(sym.name) != global_table.end()) {
-    //     std::cerr << "Global symbol '" + sym.name + "' is already defined.";
-    //   }
-
-      global_table[sym.name] = sym;
-    }
-
-    void defineFunction(const Function &func) {
-    //   if (function_table.find(func.name) != function_table.end()) {
-    //     std::cerr << "Function '" + func.name + "' is already defined.";
-    //   }
-
-      function_table[func.name] = func;
-    }
-
-    bool isDefined(const std::string &name) const {
-      return local_table.count(name) || global_table.count(name) ||
-             function_table.count(name);
-    }
-
-    bool isTypedef(const std::string &name) const {
-        return (local_table.count(name) &&
-                 local_table.at(name).kind == SYM_TYPEDEF) ||
-             (global_table.count(name) &&
-                 global_table.at(name).kind == SYM_TYPEDEF);
-    }
-
-    bool isFunction(const std::string &name) const {
-        return function_table.count(name) > 0;
-    }
-
-    bool isVariable(const std::string &name) const {
-        return  (local_table.count(name) &&
-                (local_table.at(name).kind == SYM_VARIABLE)) ||
-                (global_table.count(name) &&
-                (global_table.at(name).kind == SYM_VARIABLE));
-    }
-
-    void showSymbols() const {
-        std::cout << "Local Symbols:\n";
-        for (const auto &entry : local_table) {
-            std::cout << entry.second.str();
-        }
-        std::cout << "\nGlobal Symbols:\n";
-        for (const auto &entry : global_table) {
-            std::cout << entry.second.str();
-        }
-    }
-
-    void showFunctions() const {
-        std::cout << "Defined Functions:\n";
-        for (const auto &entry : function_table) {
-            const Function &func = entry.second;
-            std::cout << "  " << func.name
-                      << " (return type: " << func.returnType.str()
-                      << ", param count: " << func.paramCount << ")\n";
-        }
-    }
 };
 
 class Parser{
-public:
-    explicit Parser(std::vector<Token> tokens) : tokens(tokens),  pos(0) {}
-    
-    ASTNode* parseProgram();         // Entry point
 
-    void printAST() const {
-        std::cout << root->str() << std::endl;
-    }
-    
-    void error(const std::string& msg) const {
-        std::cerr << "Parser Error: " << msg << "\n";
-        std::cerr << "At token position: " << pos;
-
-        if (pos < tokens.size()) {
-            Token tok = tokens[pos];
-            std::cerr << " → Token: " << tok.str();
-
-            // Optional: if your Token has line/col info, print it
-            std::cerr << " at line " << std::to_string(tok.line) << ", col " << std::to_string(tok.column);
-        }
-
-        std::cerr << "\nContext (last few tokens):\n";
-        size_t start = (pos >= 5) ? pos - 5 : 0;
-        for (size_t i = start; i < pos && i < tokens.size(); ++i) {
-            std::cerr << "  " << i << ": " << tokens[i].str() << "\n";
-        }
-
-        std::cerr << "\nPartial AST:\n";
-        printAST();
-
-        std::cerr << "\nSymbol Table:\n";
-        std::cerr << "Local Symbols:\n";
-        for (auto it = symbols.local_table.begin();
-             it != symbols.local_table.end(); ++it) {
-          std::cerr << it->second.str();
-        }
-        std::cerr << "\nGlobal Symbols:\n";
-        for (auto it = symbols.global_table.begin();
-             it != symbols.global_table.end(); ++it) {
-          std::cerr << it->second.str();
-        }
-        std::cerr << "\nDefined Functions:\n";
-        for (auto it = symbols.function_table.begin();
-             it != symbols.function_table.end(); ++it) {
-          std::cerr << "  " << it->second.name
-                    << " (return type: " << it->second.returnType.str()
-                    << ", param count: " << it->second.paramCount << ")\n";
-        }
-
-        exit(1);
-    }
-
-    
-
-    
-
-    
-    SymbolTable symbols; // Symbol table for current scope
-
-  private:
+private:
     std::vector<Token> tokens;
-    size_t pos;
-    ASTNode* root;
+    Node* root = nullptr;
 
+    size_t pos=0;
 
-    void defineSymbol(const Symbol& sym){
-        if(currentFunction.name == "<global>"){
-            symbols.defineGlobalSymbol(sym);
-        } else {
-            symbols.defineLocalSymbol(sym, currentFunction);
-        }
-    }
+public:
+    Parser(std::vector<Token> tokens) : tokens(tokens) {} 
 
-    Function currentFunction; // Current function being parsed
+    void parse();
 
-    TypeSpecifier getTypeSpec(const std::string& str);
-    bool isTypeSpecifierStart();
-    bool isConstantExpression(ASTNode* node);
+private:
 
-    ASTNode* parseFunctionDecl();   // Parses: int main() { ... }
-    ASTNode* parseStructDecl();
-    ASTNode* parseEnumDecl();
-    ASTNode* parseTypedefDecl();
+    // helper functions
+    bool isAtEnd(size_t off=0);
+    Token peek(size_t off=0);           // peeks at current token with an optinal offset
+    Token advance();                    // consumes and returns the current token
+    bool expect(TokenType type);        // Expects a token or throws an error pos++
+    bool match(TokenType type);         // (peek().type == type) ? true : false ; pos++
+    bool match_kw(KeyWordType type);    // ...
 
-    ASTNode* parseTypeSpecifier();  // Parses: int, float, etc.
-    ASTNode* parseIdentifier();
-    ASTNode* parseParameter();      // Parses: <typespec> <ident>
+    void error(const std::string& msg); // throws an error with message and some context, and exit(1)'s
 
-    ASTNode* parseStatement();      // Parses: return x; or x = 1;
-    ASTNode* parseCompoundStmt();   // Parses: { ... }
-    ASTNode* parseReturnStmt();
-    ASTNode* parseVarDecl();
-    ASTNode* parseIfStmt();
-    ASTNode* parseWhileStmt();
-    ASTNode* parseDoStmt();
-    ASTNode* parseForStmt();
-    ASTNode* parseSwitchStmt();
-    ASTNode* parseCaseStmt();
-    ASTNode* parseDefaultStmt();
-    ASTNode* parseGotoStmt();
-
-    ASTNode* parseExpression();    
-    ASTNode* parseSizeofExpr();
-    ASTNode* parseTypeCastExpr();
-    // ASTNode* parsePostFixExpr();
-    ASTNode* parseUnaryExpr();
-    ASTNode* parseTernaryExpr();
+    // top level
+    Node* parse_top_level();
+    Node* parse_top_level_elem();
     
+    // functions
+    Node* parse_fun_definition();
+    Node* parse_fun_signature();
+    
+    // statments: done
+    Node* parse_labeled_stmt();
+    Node* parse_statement_list();
+    Node* parse_statement();
+    Node* parse_compound_stmt();
+    Node* parse_goto_stmt();
+    Node* parse_null_stmt();
+    Node* parse_return_stmt();
+    Node* parse_continue_stmt();
+    Node* parse_break_stmt();
+    Node* parse_if_stmt();
+    Node* parse_while_stmt();
+    Node* parse_do_while_stmt();
+    Node* parse_for_stmt();
+    Node* parse_decl_stmt();
 
-    int getPrecedence(TokenType type);
-    bool isRightAssociative(TokenType type);
-    ASTNode* parseBinaryExpr(int minPrec=0); // TODO: make parse expression order of operations correct
+    // assign statement
+    Node* parse_assign_list();
+    Node* parse_assign();
+    Node* parse_comp_init();
+    Node* parse_dyn_init();
+    Node* parse_const_init();
+    Node* parse_lhs_id();
 
-    ASTNode* parseAtom();
+    // expression
+    Node* parse_expr_list();
+    Node* parse_expression();
+    Node* parse_synthesized();
+    Node* parse_inplace();
+    Node* parse_ternary();
 
-    ASTNode* parseArgumentList();
-    ASTNode* parsePrimary();        // Parses: identifiers, literals
+    // binary expression
+    Node* parse_binary();
+    Node* parse_logor_expr();
+    Node* parse_logand_expr();
+    Node* parse_bitor_expr();
+    Node* parse_bitxor_expr();
+    Node* parse_bitand_expr();
+    Node* parse_eqop_expr();
+    Node* parse_relop_expr();
+    Node* parse_shift_expr();
+    Node* parse_add_expr();
+    Node* parse_mult_expr();
+    
+    // unary expression
+    Node* parse_unary();
+    Node* parse_unary_offsetof();
+    Node* parse_unary_sizeof();
+    Node* parse_unary_postdec();
+    Node* parse_unary_postinc();
+    Node* parse_unary_predec();
+    Node* parse_unary_preinc();
+    Node* parse_unary_deref();
+    Node* parse_unary_ref();
+    Node* parse_unary_lnot();
+    Node* parse_unary_2scompl();
+    Node* parse_unary_1scompl();
+    Node* parse_unary_plus();
 
+    // primary
+    Node* parse_primary();
+    Node* parse_prim_expr();
+    Node* parse_prim_funcall();
+    Node* parse_prim_literal();
+    Node* parse_prim_ident();
 
-    bool match(TokenType type);        // Checks and consumes a token if matched
-    Token peek(size_t off=0);                      // Peeks at current token
-    Token advance();                   // Consumes and returns current token
-    bool expect(TokenType type);       // Expects a token or throws an error
-    bool isAtEnd(size_t off=0);                    // End of input
+    // types
+    Node* parse_tyyid_pair_list();
+    Node* parse_tyyid_pair();
+    Node* parse_tyy_lit();
+    Node* parse_tyy_enum_lit();
+    Node* parse_tyy_enum_field();
 
+    Node* parse_tyy_ext_lit();
+    Node* parse_tyy_ext_field();
+    Node* parse_tyy_decl();
+    Node* parse_tyy_defn();
+    Node* parse_tyy_storage();
+    Node* parse_tyy_qualifier();
+    Node* parse_tyy_cast();
+    Node* parse_tyy_ref();
+    Node* parse_tyy_body();
+    Node* parse_tyy_ext();
+    Node* parse_tyy_ext_union();
+    Node* parse_tyy_ext_enum();
+    Node* parse_tyy_ext_struct();
+    Node* parse_tyy_alias();
+    Node* parse_tyy_base();
+    Node* parse_tyy_base_word();
+    Node* parse_tyy_base_sign();
+    Node* parse_tyy_base_body();
+
+    // Idents
+    Node* parse_long_index_opt();
+    Node* parse_index_opt();
+    Node* parse_index();
+    Node* parse_long_ident();
+    Node* parse_dot_ident();
+    Node* parse_arrow_ident();
+
+    // CompundLiteral
+    Node* parse_comp_literal();
+    Node* parse_list_literal();
+    Node* parse_designated_init();
+
+    // Keywords -> handled in lexer
+    // Node* parse_kw_auto();
+    // Node* parse_kw_break();
+    // Node* parse_kw_case();
+    // Node* parse_kw_char();
+    // Node* parse_kw_const();
+    // Node* parse_kw_continue();
+    // Node* parse_kw_default();
+    // Node* parse_kw_do();
+    // Node* parse_kw_double();
+    // Node* parse_kw_else();
+    // Node* parse_kw_enum();
+    // Node* parse_kw_extern();
+    // Node* parse_kw_float();
+    // Node* parse_kw_for();
+    // Node* parse_kw_goto();
+    // Node* parse_kw_if();
+    // Node* parse_kw_int();
+    // Node* parse_kw_long();
+    // Node* parse_kw_register();
+    // Node* parse_kw_return();
+    // Node* parse_kw_short();
+    // Node* parse_kw_signed();
+    // Node* parse_kw_sizeof();
+    // Node* parse_kw_static();
+    // Node* parse_kw_struct();
+    // Node* parse_kw_switch();
+    // Node* parse_kw_typedef();
+    // Node* parse_kw_union();
+    // Node* parse_kw_unsigned();
+    // Node* parse_kw_void();
+    // Node* parse_kw_volatile();
+    // Node* parse_kw_while();
+
+    // LiteralTokens
+    Node* parse_const_literal();
+    Node* parse_null_const();
+    Node* parse_expr_const();
+    Node* parse_str_const();
+    Node* parse_char_const();
+    Node* parse_num_const();
+    Node* parse_float_const();
+    Node* parse_int_const();
+    Node* parse_rational();
+    Node* parse_integer();
+    Node* parse_bin_integer();
+    Node* parse_oct_integer();
+    Node* parse_hex_integer();
+    Node* parse_dec_integer();
+    Node* parse_identifier();
+    Node* parse_letter();
+    Node* parse_lower_case();
+    Node* parse_upper_case();
+    Node* parse_hex_digit();
+    Node* parse_digit();
+    Node* parse_oct_digit();
+    Node* parse_bin_digit();
+    Node* parse_character();
+    Node* parse_printable();
+    Node* parse_char_escape();
+    Node* parse_hex_escape();
+    Node* parse_oct_escape();
+    Node* parse_escapble();
+    Node* parse_comment();
+    
 };
+
+
+
+
+
+

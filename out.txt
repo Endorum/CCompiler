@@ -1,35 +1,52 @@
+i+=123;
+i-=123;
+i*=123;
+i/=123;
+i%=123;
+i<<=123;
+i>>=123;
+i&=123;
+i|=123;
+i^=123;
 
-int main(int b){
-
-    int a = (b > 0) ? 123 : 345;
-
-    return 0;
-}
-
-0: Keyword: int
-1: identifier : 'main'
-2: lparen : '('
-3: Keyword: int
-4: identifier : 'b'
-5: rparen : ')'
-6: lbrace : '{'
-7: Keyword: int
-8: identifier : 'a'
-9: assign : '='
-10: lparen : '('
-11: identifier : 'b'
-12: gt : '>'
-13: integer_literal : '0'
-14: rparen : ')'
-15: question : '?'
-16: integer_literal : '123'
-17: colon : ':'
-18: integer_literal : '345'
+0: identifier : 'i'
+1: plus_assign : '+='
+2: integer_literal : '123'
+3: semicolon : ';'
+4: identifier : 'i'
+5: minus_assign : '-='
+6: integer_literal : '123'
+7: semicolon : ';'
+8: identifier : 'i'
+9: star_assign : '*='
+10: integer_literal : '123'
+11: semicolon : ';'
+12: identifier : 'i'
+13: slash_assign : '/='
+14: integer_literal : '123'
+15: semicolon : ';'
+16: identifier : 'i'
+17: mod_assign : '%='
+18: integer_literal : '123'
 19: semicolon : ';'
-20: Keyword: return
-21: integer_literal : '0'
-22: semicolon : ';'
-23: rbrace : '}'
-24: end_of_file : 'EOF'
-Program type info: Unknown Type: 12 
-
+20: identifier : 'i'
+21: shl_assign : '<<='
+22: integer_literal : '123'
+23: semicolon : ';'
+24: identifier : 'i'
+25: shr_assign : '>>='
+26: integer_literal : '123'
+27: semicolon : ';'
+28: identifier : 'i'
+29: bw_and_assign : '&='
+30: integer_literal : '123'
+31: semicolon : ';'
+32: identifier : 'i'
+33: bw_or_assign : '|='
+34: integer_literal : '123'
+35: semicolon : ';'
+36: identifier : 'i'
+37: bw_xor_assign : '^='
+38: integer_literal : '123'
+39: semicolon : ';'
+40: end_of_file : 'EOF'

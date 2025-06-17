@@ -314,8 +314,14 @@ Token Lexer::lexOperatorOrPunctuation() {
             }
 
         case '%':
-            position++;
-            return Token(TokenType::PERCENT, "%%");
+            if(next() == '='){
+                position += 2;
+                return Token(TokenType::MOD_ASSIGN, "%=");
+            }else{
+                position++;
+                return Token(TokenType::PERCENT, "%%");
+            }
+            
         
         case '<':
             if(next() == '='){
@@ -323,8 +329,13 @@ Token Lexer::lexOperatorOrPunctuation() {
                 return Token(TokenType::LTE, "<=");
             }
             if(next() == '<'){
-                position += 2;
-                return Token(TokenType::SHIFT_LEFT, "<<");
+                position++;
+                if(next() == '='){
+                    position += 2;
+                    return Token(TokenType::SHL_ASSIGN, "<<=");
+                }else{
+                    return Token(TokenType::SHIFT_LEFT, "<<");
+                }
             }else{
                 position++;
                 return Token(TokenType::LT, "<");
@@ -336,8 +347,13 @@ Token Lexer::lexOperatorOrPunctuation() {
                 return Token(TokenType::GTE, ">=");
             }
             if(next() == '>'){
-                position += 2;
-                return Token(TokenType::SHIFT_RIGHT, ">>");
+                position++;
+                if(next() == '='){
+                    position += 2;
+                    return Token(TokenType::SHR_ASSIGN, ">>=");
+                }else{
+                    return Token(TokenType::SHIFT_RIGHT, ">>");
+                }
             }else{
                 position++;
                 return Token(TokenType::GT, ">");
@@ -348,20 +364,30 @@ Token Lexer::lexOperatorOrPunctuation() {
                 position += 2;
                 return Token(TokenType::AND, "&&");
             }else{
-                position++;
-                return Token(TokenType::BIT_AND, "&");
+                if(next() == '='){
+                    position += 2;
+                    return Token(TokenType::BW_AND_ASSIGN, "&=");
+                }else{
+                    return Token(TokenType::BIT_AND, "&");
+                }
             }
         case '|':
             if(next() == '|'){
                 position += 2;
                 return Token(TokenType::OR, "||");
             }else{
-                position++;
+                if(next() == '='){
+                    position += 2;
+                    return Token(TokenType::BW_OR_ASSIGN, "|=");
+                }
                 return Token(TokenType::BIT_OR, "|");
             }
 
         case '^':
-            position++;
+            if(next() == '='){
+                position += 2;
+                return Token(TokenType::BW_XOR_ASSIGN, "^=");
+            }
             return Token(TokenType::BIT_XOR, "^");
 
         case '~':

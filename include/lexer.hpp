@@ -24,6 +24,7 @@ typedef enum{
     PLUS, MINUS, STAR, SLASH, PERCENT,
     INCREMENT, DECREMENT,
     ASSIGN, PLUS_ASSIGN, MINUS_ASSIGN, STAR_ASSIGN, SLASH_ASSIGN,
+    MOD_ASSIGN, SHL_ASSIGN, SHR_ASSIGN, BW_AND_ASSIGN, BW_OR_ASSIGN, BW_XOR_ASSIGN,
     EQ, NEQ, GT, LT, GTE, LTE,
     AND, OR, NOT,
     BIT_AND, BIT_OR, BIT_XOR, BIT_NOT, SHIFT_LEFT, SHIFT_RIGHT,
@@ -61,6 +62,12 @@ inline std::string stringFromTokenType(TokenType type){
     if(type == MINUS_ASSIGN) return "minus_assign";
     if(type == STAR_ASSIGN) return "star_assign";
     if(type == SLASH_ASSIGN) return "slash_assign";
+    if(type == MOD_ASSIGN) return "mod_assign";
+    if(type == SHL_ASSIGN) return "shl_assign";
+    if(type == SHR_ASSIGN) return "shr_assign";
+    if(type == BW_AND_ASSIGN) return "bw_and_assign";
+    if(type == BW_OR_ASSIGN) return "bw_or_assign";
+    if(type == BW_XOR_ASSIGN) return "bw_xor_assign";
     if(type == EQ) return "eq";
     if(type == NEQ) return "neq";
     if(type == GT) return "gt";

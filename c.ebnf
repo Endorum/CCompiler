@@ -1,0 +1,368 @@
+Grammar::Syntactic::ANSI_C
+
++Syntax::TopLevel
+
+top_level	::= { top_level_elem | comment }
+
+top_level_elem	::= decl_stmt | fn_definition
+
++Syntax::Functions
+
+fun_definition	::= fun_signature compound_statement
+
+fun_signature	::= [ kw_static ] [ kw_inline ] tyy_decl identifier '(' tyyid_pair_list ')'
+
++Syntax::Statements
+
+labeled_stmt	::= identifier ':' statement_list
+
+statement_list  ::= { statement }
+
+statement	::= decl_stmt
+		| for_stmt
+		| break_stmt
+		| null_stmt
+		| return_stmt
+		| compound_stmt
+		| continue_stmt
+		| if_stmt
+		| while_stmt
+		| do_while_stmt
+		| labeled_stmt
+		| goto_stmt
+
+compound_stmt	::= '{' statement_list '}'
+
+goto_stmt	::= kw_goto identifier ';'
+
+null_stmt	::= ';'
+
+return_stmt	::= kw_return expression ';'
+
+continue_stmt	::= kw_continue ';'
+
+break_stmt	::= kw_break ';'
+
+if_stmt		::= kw_if '(' expr_list ')' compound_stmt { kw_else [ '(' expr_list ')' ] compound_stmt }
+
+while_stmt	::= kw_while '(' expr_list ')' compound_stmt
+
+do_while_stmt	::= kw_do compound_stmt kw_while '(' expr_list ')' ';'
+
+for_stmt	::= kw_for '(' assign_list ';' expr_list ';' expr_list ')' compound_stmt
+
+decl_stmt	::= assign_list ';'
+		| tyy_defn ';'
+		| fun_signature ';'
+
++Syntax::AssignStatment
+
+assign_list 	::= assign_stmt { ',' assign_stmt }
+
+assign		::= dyn_init
+		| const_init
+		| comp_literal
+
+comp_init	::= [ tyy_decl ] lhs_id [ '=' [ tyy_cast ] comp_literal ]
+
+dyn_init	::= [ tyy_decl ] lhs_id [ '=' [ tyy_cast ] expression ]
+
+const_init	::= [ tyy_decl ] lhs_id [ '=' [ tyy_cast ] const_literal ]
+
+lhs_id		::= [ kw_const ] [ '*' ] ( long_index_opt | index_opt )
+
++Syntax::Expression
+
+expr_list	::= expression { ',' expression }
+
+expression	::= primary
+	        | unary
+		| binary
+		| ternary
+		| inplace
+		| synthesized
+
+synthesized	::= '(' assign_list ')'
+
+inplace		::= long_index_opt ( "+="    | "-=" 
+				    | "*="  | "/=" 
+				    | "%="  | "<<=" 
+				    | ">>=" | "&=" 
+				    | "|="  | "^=" ) expression
+
+ternary		::= binary '?' binary ':' binary 
+
++Syntax::Binary_Expression
+
+binary		::= logor_expr
+
+logor_expr	::= logand_expr "||" logor_expr
+
+logand_expr	::= bitor_expr "&&" logand_expr
+
+bitor_expr	::= bitxor_expr '|' bitor_expr
+
+bitxor_expr	::= bitand_expr '^' bitxor_expr
+
+bitand_expr	::= eqop_expr '&' bitand_expr
+
+eqop_expr	::= relop_expr "==" eqop_expr
+		| relop_expr "!=" eqop_expr
+
+relop_expr	::= shift_expr '<' relop_expr
+		| shift_expr '>' relop_expr
+		| shift_expr "<=" relop_expr
+		| shift_expr ">=" relop_expr
+
+shift_expr	::= add_expr ">>" shift_expr
+		| add_expr "<<" shift_expr
+
+add_expr	::= mult_expr '+' add_expr
+		| mult_expr '-' add_expr
+
+mult_expr	::= unary '*' multi_expr
+		| unary '/' multi_expr
+		| unary '%' mutli_expr
+
++Syntax::Unary_Expression
+
+unary		::= unary_plus
+		| unary_minus
+		| unary_1scomp
+		| unary_2scomp
+		| unary_lnot
+		| unary_ref
+                 | unary_deref
+		| unary_preinc
+		| unary_predec
+		| unary_postinc
+		| unary_postdec
+                 | unary_offsetof
+		| unary_sizeof
+
+unary_offsetof	::= "offsetof" primary
+
+unary_sizeof	::= "sizeof" primary
+
+unary_postdec	::= primary "--"
+
+unary_postinc	::= primary "++"
+
+unary_predec	::= "--" primary
+
+unary_preinc	::= "++" primary
+
+unary_deref	::= '*' primary
+
+unary_ref	::= '&' primary
+
+unary_lnot	::= '!' primary
+
+unary-2scompl	::= '~' primary
+
+unary-1scompl	::= '-' primary
+
+unary_plus	::= '+' primary
+
++Syntax::Primary
+
+primary		::= prim_expr 
+		      | prim_funcall 
+		      | prim_literal
+		      | prim_ident
+
+prim_expr	::= '(' expression ')'
+
+prim_funcall	::= identifier '(' expr_list ')'
+
+prim_literal	::= const_literal
+
+prim_ident	::= long_index_opt
+		| index_opt
+
+
++Syntax::Types
+
+tyyid_pair_list	::= tyyid_pair { ',' tyyid_pair }
+
+tyyid_pair	::= tyy_decl [ kw_const ] [ '*' ] identifier
+
+tyy_lit		::= tyy_enum_lit
+		| tyy_ext_lit
+
+tyy_enum_lit	::= '{' tyy_enum_field { ',' tyy_enum_field } '}'
+
+tyy_enum_field	::= identifier [ '=' int_const ]
+
+tyy_ext_lit	::= '{' tyy_ext_field { ';' tyy_ext_field } '}'
+
+tyy_ext_field	::= tyy_decl identifier
+
+tyy_decl	::= [ tyy_storage ] [ tyy_qualifier ] [ '*' ] tyy_body
+
+tyy_defn	::= kw_typedef tyy_body tyy_alias
+
+tyy_storage	::= kw_auto
+		| kw_static
+		| kw_extern
+		| kw_register
+
+tyy_qualifier	::= kw_const
+		| kw_volatile
+		| kw_restrict
+
+tyy_cast	::= '(' tyy_ref ')'
+
+tyy_ref		::= tyy_body [ '*' ]
+
+tyy_body	::= tyy_base
+		| tyy_ext
+		| tyy_lit
+
+tyy_ext		::= tyy_ext_union
+		| tyy_ext_enum
+		| tyy_ext_struct
+
+tyy_ext_union	::= kw_union tyy_alias
+
+tyy_ext_enum	::= kw_enum tyy_alias
+
+tyy_ext_struct	::= kw_struct tyy_alias
+
+tyy_alias	::= identifier
+
+tyy_base	::= [ tyy_base_word ] [ tyy_base_sign ] tyy_base_body
+
+tyy_base_word	::= kw_long
+		| kw_short
+
+tyy_base_sign 	::= kw_signed
+		| kw_unsigned
+		
+tyy_base_body	::= kw_char
+		| kw_int
+		| kw_float
+		| kw_double
+		| kw_void
+
++Syntax::Idents
+
+long_index_opt	::= long_ident [ index ]
+
+index_opt	::= identifier [ index ]
+
+index		::= '[' [ long_ident | const_literal ] ']'
+
+long_ident	::= identifier { ( dot_ident | arrow_ident ) }
+
+dot_ident	::= identifier { '.' identifier }
+
+arrow_ident	::= identifier { "->" identifier }
+
++Syntax::CompoundLiteral
+
+comp_literal	::= [ '(' tyy_decl ')' ] list_literal
+
+list_literal	::= '{'  designated_init { ',' designated_init } '}'
+
+designated_init ::= [ '.' identifier '=' ] const_literal
+
+Gramamr::Lexical::ANSI_C
+
++Lexical::Keywords
+
+kw_auto		::= "auto"
+kw_break	::= "break"
+kw_case		::= "case"
+kw_char		::= "char"
+kw_const	::= "const"
+kw_continue	::= "continue"
+kw_default	::= "default"
+kw_do		::= "do"
+kw_double	::= "double"
+kw_else		::= "else"
+kw_enum 	::= "enum"
+kw_extern 	::= "extern"
+kw_float 	 ::= "float"
+kw_for 		::= "for"
+kw_goto 	::= "goto"
+kw_if 		::= "if"
+kw_int 		::= "int"
+kw_long 	::= "long"
+kw_register ::= "register"
+kw_return 	::= "return"
+kw_short 	::= "short"
+kw_signed 	::= "signed"
+kw_sizeof 	::= "sizeof"
+kw_static 	::= "static"
+kw_inline   ::= "inline"
+kw_struct 	::= "struct"
+kw_switch 	::= "switch"
+kw_typedef 	::= "typedef"
+kw_union 	::= "union"
+kw_unsigned 	::= "unsigned"
+kw_void 	::= "void"
+kw_volatile 	::= "volatile"
+kw_while 	::= "while"
+
++Lexical::LiteralTokens
+
+const_literal	::= expr_const | str_const | char_const | num_const | int_const | null_const
+
+null_const	::= "NULL"
+
+expr_const	::= int_const { ( '+' | '-' | '*' | '%' | '/' | '&' | '|' ) int_const }
+
+str_const	::= [ 'L' ] '"' { character } '"'
+
+char_const	::= "'" character  "'"
+
+num_const	::= integer | rational
+
+float_const	::= float
+
+int_const	::= integer | char_const
+
+rational	::= [ intenger ] '.' integer
+
+integer		::= dec_integer | hex_integer | oct_integer | bin_integer
+
+bin_integer	::= ( "0b" | "0B" ) bin_digit { bin_digit }
+
+oct_integer	::= ( "0o" | "0O" ) oct_digt { oct_digit }
+
+hex_integer	::= ( "0x" | "0X" ) hex_digit { hex_digit }
+
+dec_integer	::= digit { digit }
+
+identifier	::= ( letter | '_' ) { letter | digit | '_' }
+
+letter		::= upper_case | lower_case
+
+lower_case	::= 'a' | 'b' | 'c' | ... | 'x' | 'y' | 'z'
+
+upper_case	::= 'A' | 'B' | 'C' | ... | 'X' | 'Y' | 'Z'
+
+hex_digit	::= digit | 'a' | 'b' | 'c' | 'd' | 'e' | 'f'
+			 | 'A' | 'B' | 'C' | 'D' | 'E' | 'F'
+
+digit		::= oct_digit | '8' | '9'
+
+oct_digit	::= bin_digit | '2' | '3' | '4' | '5' | '6' | '7'
+
+bin_digit	::= '0' | '1'
+
+character	::= printable | char_escape | hex_escape | oct_escape
+
+printable	::= ' ' | '!' | '"' | ... | '|' | '}' | '~'
+
+char_escape	::= '\' escapable
+
+hex_escape	::= "\x" hex_digit hex_digit
+
+oct_escape	::= '\' oct_digit oct_dit oct_digit
+
+escapble	::= 'n' | 'a' | 'b' | 't' | 'f' | 'r' | 'v' | '\' | "'" | '"' | '?' | '0'
+
+comment		::= "// " ? any_char ? "\n"
+		| "/*" ? any_char "*/"

@@ -64,6 +64,7 @@ inline KeyWordType keyWordTypeFromString(std::string str){
     if(str == "_Noreturn") return KEYWORD__NORETURN; 
     if(str == "_Static_assert") return KEYWORD__STATIC_ASSERT; 
     if(str == "_Thread_local") return KEYWORD__THREAD_LOCAL;
+    if(str == "offsetof") return KEYWORD_OFFSETOF;
     return NOT_A_KEYWORD;
 }
 
@@ -115,56 +116,6 @@ inline std::string stringFromKeyWordType(KeyWordType type){
     return "not a keyword";
 }
 
-inline std::string nodeTypeToString(NodeType type){
-    switch (type) {
-    
-    
-        case NT_None: return "None";
-        case NT_Program: return "Program";
-        case NT_FunctionDecl: return "FunctionDecl";
-        case NT_FunctionDef: return "FunctionDef";
-        case NT_ParamList: return "ParamList";
-        case NT_ExpressionList: return "ExpressionList";
-        case NT_Parameter: return "Parameter";
-        case NT_CompoundStmt: return "CompoundStmt";
-        case NT_Declaration: return "Declaration";
-        case NT_TypedefDeclaration: return "TypedefDeclaration";
-        case NT_Assignment: return "Assignment";
-        case NT_IfStmt: return "IfStmt";
-        case NT_WhileStmt: return "WhileStmt";
-        case NT_ReturnStmt: return "ReturnStmt";
-        case NT_ExpressionStmt: return "ExpressionStmt";
-        case NT_BinaryExpr: return "BinaryExpr";
-        case NT_UnaryExpr: return "UnaryExpr";
-        case NT_Literal: return "Literal";
-        case NT_Identifier: return "Identifier";
-        case NT_CallExpr: return "CallExpr";
-        case NT_TypeSpecifier: return "TypeSpecifier";
-        case NT_PointerType: return "PointerType";
-        case NT_ArraySubscripting: return "ArraySubscripting";
-        case NT_TernaryExpr: return "TernaryExpr";
-        case NT_StructAccess: return "StructAccess";
-        case NT_TypeCastExpr: return "TypeCastExpr";
-        case NT_SizeofExpr: return "SizeofExpr";
-        case NT_DoStmt: return "DoStmt";
-        case NT_ForStmt: return "ForStmt";
-        case NT_SwitchStmt: return "SwitchStmt";
-        case NT_CaseStmt: return "CaseStmt";
-        case NT_DefaultStmt: return "DefaultStmt";
-        case NT_GotoStmt: return "GotoStmt";
-        case NT_ContinueStmt: return "ContinueStmt";
-        case NT_BreakStmt: return "BreakStmt";
-        case NT_StructDecl: return "StructDecl";
-        case NT_EnumDecl: return "EnumDecl";
-        case NT_StructType: return "StructType";
-        case NT_EnumMember: return "EnumMember";
-        case NT_EnumType: return "EnumType";
-        case NT_PostFixExpr: return "PostFixExpr";
-        case NT_Initializer: return "Initilizer";
-        
-    }
-    return "<None>";
-}
 
 
 inline std::string baseTypeToString(BaseType base, int pointerLevel = 0){
@@ -186,11 +137,6 @@ inline std::string baseTypeToString(BaseType base, int pointerLevel = 0){
         case BT_DOUBLE: out += "double"; break;
         case BT_SIGNED: out += "signed"; break;
         case BT_UNSIGNED: out += "unsigned"; break;
-        case BT_STRUCT: out += "struct"; break;
-        case BT_ENUM: out += "enum"; break;
-        case BT_TYPEDEF_NAME: out += "typedef"; break;
-        case BT_INIT_LIST: out += "init list"; break;
-        case BT_ARRAY: out += "array"; break;
         default: out += "Unknown Type: " + std::to_string(base); break;
     }
 

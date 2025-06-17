@@ -1,13 +1,11 @@
+
+#include <cerrno>
 #include <cmath>
 #include <cstddef>
-#include <exception>
+#include <regex>
 #include <string>
-#include <sys/errno.h>
-#include <system_error>
-#include <unordered_map>
 
 #include "../include/parser.hpp"
-
 
 Token Parser::peek(size_t off) {
     if (isAtEnd(off)) return Token(TokenType::END_OF_FILE, "");
@@ -36,1198 +34,2124 @@ bool Parser::isAtEnd(size_t off) {
     return pos+off >= tokens.size(); // || tokens[pos].type == TokenType::END_OF_FILE;
 }
 
+bool Parser::match_kw(KeyWordType type) {
+    if (isAtEnd()) return false;
+    if (peek().kw_type != type) return false;
+    pos++;
+    return true;
+}
 
-ASTNode* Parser::parseProgram(){
-    root = new ASTNode(NT_Program);
+void Parser::error(const std::string& msg) {
+    std::cerr << "Parser Error: " << msg << "\n";
+    std::cerr << "At token position: " << pos;
 
-    while (!isAtEnd()) {
-        if (peek().type == TokenType::END_OF_FILE) {
-            break;
-        }
+    if(pos < tokens.size()){
+        Token token = tokens[pos];
+        std::cerr << " Token: " << token.str();
+    }
 
-        if(peek().type == TokenType::INCLUDE_PATH){
-            advance();
-            continue;
-        }
+    std::cerr << "\nContext (last few tokens): \n";
+    size_t start = (pos >= 5) ? pos - 5 : 0;
+    for(size_t i = start; i < pos && i < tokens.size(); i++){
+        std::cerr << " " << i << ": " << tokens[i].str() << "\n";
+    }
 
-        if(peek().kw_type == KEYWORD_STRUCT){
-            ASTNode* decl = parseStructDecl();
-            if (decl) root->addChild(decl);
-            else
-                error("Struct declaration was null");
-            continue;
-        }
+    std::cerr << "\nPartial AST:\n";
+    std::cerr << root->str();
 
-        if(peek().kw_type == KEYWORD_ENUM){
-            ASTNode* decl = parseEnumDecl();
-            if (decl) root->addChild(decl);
-            else
-                error("Enum declaration was null");
-            continue;
-        }
 
-        if(peek().kw_type == KEYWORD_TYPEDEF){
-            root->addChild(parseTypedefDecl());
-            continue;
-        }
+    exit(1);
+}
 
-        TypeSpecifier typespec = getTypeSpec(peek().value);
+void Parser::parse(){
+    parse_top_level();
+}
 
-        // Handle type specifier-based entries (could be function or global variable)
-        if (typespec != TS_NONE) {
-            // Lookahead: if after type we have IDENTIFIER and then LPAREN, it's a function
-            if (peek(1).type == TokenType::IDENTIFIER && peek(2).type == TokenType::LPAREN) {
-                ASTNode* decl = parseFunctionDecl();
-                if (decl) {
-                    root->addChild(decl);
-                } else {
-                    error("Expected a function declaration/definition");
-                }
-            } else {
-                root->addChild(parseVarDecl()); // global variable declaration
-            }
-            continue;
-        }
 
-        error("Unexpected token at top level: " + peek().str());
+Node* Parser::parse_top_level() {
+    // top_level	::= { top_level_elem | comment }
+    root = new Node(NT_TOP_LEVEL);
+
+    while(!isAtEnd()){
+        // comments are already handled in the tokenizer
+        Node* elem = parse_top_level_elem();
+        root->addChild(elem);
     }
 
     return root;
-}
-
-TypeSpecifier Parser::getTypeSpec(const std::string& str){
-    if(str == "void") return TS_VOID;
-    if(str == "char") return TS_CHAR;
-    if(str == "short") return TS_SHORT;
-    if(str == "int") return TS_INT;
-    if(str == "long") return TS_LONG;
-    if(str == "float") return TS_FLOAT;
-    if(str == "double") return TS_DOUBLE;
-    if(str == "signed") return TS_SIGNED;
-    if(str == "unsigned") return TS_UNSIGNED;
-    // if str is typedef table
-    return TS_NONE;
-}
-
-bool Parser::isTypeSpecifierStart() {
-    if (peek().type == TokenType::KEYWORD) {
-        if (getTypeSpec(peek().value) != TS_NONE) return true;
-        if (peek().kw_type == KEYWORD_STRUCT || peek().kw_type == KEYWORD_ENUM) return true;
-        // Check typedefs in local and global tables
-        if (symbols.local_table.count(peek().value) &&
-            symbols.local_table[peek().value].kind == SYM_TYPEDEF)
-          return true;
-        if (symbols.global_table.count(peek().value) &&
-            symbols.global_table[peek().value].kind == SYM_TYPEDEF)
-          return true;
-    } else {
-        // Check typedefs in local and global tables
-        if (symbols.local_table.count(peek().value) &&
-            symbols.local_table[peek().value].kind == SYM_TYPEDEF)
-          return true;
-        if (symbols.global_table.count(peek().value) &&
-            symbols.global_table[peek().value].kind == SYM_TYPEDEF)
-          return true;
-    }
-    return false;
-}
-
-ASTNode* Parser::parseFunctionDecl(){
-    /*
-    format:
-
-    typespec.
-    identifier
-    '('
-    param-list
-    ')'
-    '{' ? -> FuncDef : ';' ? -> FuncDec
-    stmt-list
-    '}'
-    */
-
-
-    ASTNode* returnType = parseTypeSpecifier();
-    if(!returnType) error("Expected type specifier at function declaration");
-    
-    ASTNode* funcName = parseIdentifier();
-    if(!funcName) error("Expected function name after return type");
-    
-    
-    if(!match(LPAREN)) error("Expected '(' after function name");
-
-    currentFunction.name = funcName->value;
-    currentFunction.returnType = returnType->typeInfo;
-    currentFunction.paramCount = 0; // will be set later
-    
-
-    ASTNode* paramList = new ASTNode(NT_ParamList);
-    while(peek().type != TokenType::RPAREN){
-        if(isAtEnd()) error("Unterminated parameter list in function declaration");
-        ASTNode* param = parseParameter();
-        paramList->addChild(param);
-
-        if(peek().type == TokenType::RPAREN) break;
-        advance(); // past the comma
-
-    }
-    advance(); // past )
-
-    ASTNode* func = new ASTNode(NT_FunctionDecl);
-    func->addChild(returnType);
-    func->addChild(funcName);
-    func->addChild(paramList);
-
-    func->typeInfo = returnType->typeInfo;
-
-    Function funcStruct;
-    funcStruct.name = funcName->value;
-    funcStruct.returnType = returnType->typeInfo;
-    funcStruct.paramCount = paramList->children.size();
-    
-
-    symbols.defineFunction(funcStruct);
-
-    
-
-    if(peek().type == LBRACE){
-        ASTNode* body = parseCompoundStmt(); // parse body
-        func->addChild(body);
-    } else if(!match(SEMICOLON)){
-        error("Expected '{' for function body or ';' for declaration end");
-    }
-
-
-    currentFunction.name = "<global>";
-    currentFunction.returnType.base = BT_VOID;
-
-
-    return func;
-}
-
-ASTNode* Parser::parseStructDecl(){
-    /*
-    struct <ident> <statement>;
-    */
-    expect(KEYWORD);
-    
-    ASTNode* name = parseIdentifier();
-
-
-    if(name == nullptr){
-        name = new ASTNode(NT_None, "Unnamed struct");
-    }
-    
-    ASTNode* structDecl = new ASTNode(NT_StructDecl, name->value);
-    structDecl->addChild(name);
-
-    if(match(LBRACE)){
-        while (!match(RBRACE)) {
-            ASTNode* member = parseVarDecl(); // e.g. int x;
-            structDecl->addChild(member);
-        }
-    }
-    // expect(SEMICOLON);
-
-    structDecl->typeInfo.base = BT_STRUCT;
-    structDecl->typeInfo.name = name->value;
-
-    return structDecl;
 
 }
 
-ASTNode* Parser::parseEnumDecl() {
-    advance(); // consume 'enum'
-    ASTNode* enumDecl = new ASTNode(NT_EnumDecl);
-
-    std::string enumName = "Unnamed enum";
-    // Optional name
-    if (peek().type == IDENTIFIER) {
-        std::string enumName = advance().value;
-        enumDecl->addChild(new ASTNode(NT_Identifier, enumName));
-        
-    }
-
-    // Forward declaration
-    if (match(SEMICOLON)) {
-        return enumDecl;
-    }
-
-    // Definition with member list
-    expect(LBRACE);
-    while (!match(RBRACE)) {
-        if (peek().type != IDENTIFIER) {
-            error("Expected identifier in enum member list");
-        }
-
-        std::string name = advance().value;
-        ASTNode* member = new ASTNode(NT_EnumMember, name);
-
-        Symbol enumMember;
-        enumMember.kind = SYM_ENUM_MEMBER;
-        enumMember.name = name;
-        enumMember.scope = currentFunction; // Current function scope
-        enumMember.typeInfo.base = BT_INT;
-
-        defineSymbol(enumMember);
-        
-
-        if (match(ASSIGN)) {
-            ASTNode* valueExpr = parseExpression();
-            member->addChild(valueExpr);
-        }
-
-        enumDecl->addChild(member);
-
-        if (peek().type == RBRACE) break;
-        expect(COMMA);
-    }
-    if(peek().type == RBRACE) advance();
+Node* Parser::parse_top_level_elem() {
+    // top_level_elem	::= decl_stmt | fun_definition
     
-    expect(SEMICOLON);
+    size_t backup = pos;
+    Node* node;
 
-    enumDecl->typeInfo.base = BT_ENUM;
-    enumDecl->typeInfo.name = enumName;
+    node = parse_decl_stmt();
+    if(node != nullptr) return node;
+
+    pos = backup;
     
-    return enumDecl;
-}
+    node = parse_fun_definition();
+    if(node != nullptr) return node;
 
-ASTNode* Parser::parseTypedefDecl(){
-    advance();
-    ASTNode* decl = nullptr;
-    if(peek().kw_type == KEYWORD_STRUCT){
-        decl = parseStructDecl();
-    }else if(peek().kw_type == KEYWORD_ENUM){
-        decl = parseEnumDecl();
-    }else if(getTypeSpec(peek().value) != TS_NONE){
-        decl = parseVarDecl();
-    }else{
-        error("Invalid type definiton");
-    }
-
-    ASTNode* name = parseIdentifier();
-    expect(SEMICOLON);
-    ASTNode* TypedefDecl = new ASTNode(NT_TypedefDeclaration, "typedef");
-    TypedefDecl->addChild(name);
-    TypedefDecl->addChild(decl);
-
-    // ASTNode* type = parseTypeSpecifier();
-    // ASTNode* name = parseIdentifier();
-    // expect(SEMICOLON);
-
-    if(currentFunction.name != "<global>"){
-        error("Typedefs can only be defined in global scope");
-    }
-
-    
-    Symbol sym;
-    sym.kind = SYM_TYPEDEF;
-    sym.name = name->value;
-    sym.typeInfo = decl->typeInfo; // Use the type info from the declaration
-    sym.scope = currentFunction; // Current function scope
-    symbols.defineGlobalSymbol(sym);
-
-    // ASTNode* typedefNode = new ASTNode(NT_Declaration);
-    // typedefNode->addChild(type);
-    // typedefNode->addChild(name);
-
-    TypedefDecl->typeInfo.base = BT_TYPEDEF_NAME;
-    TypedefDecl->typeInfo.name = name->value;
-
-    return TypedefDecl;
-}
-
-BaseType primTypeStrToBaseType(std::string str){
-    if (str == "void") return BT_VOID;
-    if (str == "char") return BT_CHAR;
-    if (str == "short") return BT_SHORT;
-    if (str == "int") return BT_INT;
-    if (str == "long") return BT_LONG;
-    if (str == "float") return BT_FLOAT;
-    if (str == "double") return BT_DOUBLE;
-    if (str == "signed") return BT_SIGNED;
-    if (str == "unsigned") return BT_UNSIGNED;
-    if (str == "struct") return BT_STRUCT;
-    if (str == "enum") return BT_ENUM;
-    if (str == "typedef") return BT_TYPEDEF_NAME;
-    return BT_UNKNOWN;
-}
-
-ASTNode* Parser::parseTypeSpecifier(){
-    ASTNode* node = nullptr;
-
-    
-
-    if (symbols.isTypedef(peek().value)) {
-        node = new ASTNode(NT_TypeSpecifier, advance().value);
-
-        node->typeInfo.base = BT_TYPEDEF_NAME;
-        node->typeInfo.name = peek().value;
-
-        return node;
-    }
-
-    if(peek().type == TokenType::KEYWORD){
-        if(peek().kw_type == KEYWORD_STRUCT){
-            advance(); // consume struct keyword
-            if(peek().type != IDENTIFIER) error("Expected struct name in type specifier");
-
-            Token structName = advance();
-            ASTNode* structType = new ASTNode(NT_StructType, structName.value);
-
-            structType->typeInfo.base = BT_STRUCT;
-            structType->typeInfo.name = structName.value;
-
-            while(match(TokenType::STAR)){
-                structType->typeInfo.pointerLevel++;
-
-                ASTNode* ptr = new ASTNode(NT_PointerType);
-                ptr->addChild(structType);
-                structType = ptr;
-            }
-
-            return structType;
-        }
-        if(peek().kw_type == KEYWORD_ENUM){
-
-            advance(); 
-            if(peek().type != IDENTIFIER) error("Expected enum name in type specifier");
-
-            Token enumName = advance();
-            ASTNode* enumType = new ASTNode(NT_EnumType, enumName.value);
-
-            enumType->typeInfo.base = BT_ENUM;
-            enumType->typeInfo.name = enumName.value;
-
-            while(match(TokenType::STAR)){
-                enumType->typeInfo.pointerLevel++;
-
-                ASTNode* ptr = new ASTNode(NT_PointerType);
-                ptr->addChild(enumType);
-                enumType = ptr;
-            }
-
-            return enumType;
-
-        }
-        if(peek().kw_type == KEYWORD_TYPEDEF){
-            advance();
-            parseTypedefDecl(); // ???
-        }   
-        if(getTypeSpec(peek().value) != TS_NONE){
-            Token base = advance();
-            ASTNode* type = new ASTNode(NT_TypeSpecifier, base.value);
-
-            type->typeInfo.base = primTypeStrToBaseType(base.value);
-
-            while(match(STAR)){
-                type->typeInfo.pointerLevel++;
-                
-
-                ASTNode* ptr = new ASTNode(NT_PointerType);
-                ptr->addChild(type);
-                type = ptr;
-            }
-            
-            return type;
-        }
-    }
+    error("Expected declaration or function definition");
     return nullptr;
 }
 
-ASTNode* Parser::parseIdentifier(){
-    if(peek().type != TokenType::IDENTIFIER) return nullptr;
-    return new ASTNode(NT_Identifier, advance().value);
+Node* Parser::parse_fun_definition() {
+    // fun_definition	::= fun_signature compound_statement
+    Node* functionNode = new Node(NT_FUN_DEFINITION);
+
+    Node* fun_signature = parse_fun_signature();
+    if(!fun_signature) return nullptr;
+
+    Node* compound_stmt = parse_compound_stmt();
+    if(!compound_stmt) {
+        delete functionNode;
+        error("Expected a compound statement for function definition");
+    }
+
+    functionNode->addChild(fun_signature);
+    functionNode->addChild(compound_stmt);
+
+    return functionNode;
 }
 
-ASTNode* Parser::parseParameter(){
-    ASTNode* parameter = new ASTNode(NT_Parameter);
+Node* Parser::parse_fun_signature() {
+    // fun_signature	::= [ kw_static ] [ kw_inline ] tyy_decl identifier '(' tyyid_pair_list ')'
+    Node* fun_signature = new Node(NT_FUN_SIGNATURE);
 
-    ASTNode* typespec = parseTypeSpecifier();
-    ASTNode* ident = parseIdentifier();
+    if(match_kw(KEYWORD_STATIC)){
+        Node* staticKw = new Node(NT_KW_STATIC, "static");
+        fun_signature->addChild(staticKw);
+    }
 
-    if(!typespec) error("Expected a type specifier for a parameter");
-    if(!ident) error("Expected an identifier for parameter");
+    if(match_kw(KEYWORD_INLINE)){
+        Node* inlineKw = new Node(NT_KW_INLINE, "inline");
+        fun_signature->addChild(inlineKw);
+    }
 
-    parameter->addChild(typespec);
-    parameter->addChild(ident);
+    Node* returnType = parse_tyy_decl();
+    if(!returnType){
+        delete fun_signature;
+        return nullptr;
+    }
+    fun_signature->addChild(returnType);
 
-    parameter->typeInfo = typespec->typeInfo;
+    if(!match(LPAREN)){
+        error("Expected '(' in function siganture");
+    }
 
-    Symbol parameterSym;
+    Node* paramList = parse_tyyid_pair_list(); // e.g. (int a, float b)
+    fun_signature->addChild(paramList);
 
-    parameterSym.kind = SYM_PARAMETER;
-    parameterSym.name = ident->value;
-    parameterSym.typeInfo = typespec->typeInfo;
+    if(!match(RPAREN)){
+        error("Expected ')' after function parameter list");
+    }
 
-    parameterSym.scope = currentFunction;
-
-    defineSymbol(parameterSym);
-    currentFunction.paramCount++;
-
-    return parameter;
+    return fun_signature;
 }
 
+Node* Parser::parse_labeled_stmt() {
+    // labeled_stmt	::= identifier ':' statement_list
+    Node* labeled_stmt = new Node(NT_LABELED_STMT);
 
-ASTNode* Parser::parseStatement(){
-
-    if(peek().kw_type == KEYWORD_RETURN){
-        return parseReturnStmt();
+    Node* ident = parse_identifier();
+    if(!ident){
+        delete labeled_stmt;
+        return nullptr;
     }
 
-    if(peek().type == LBRACE){
-        return parseCompoundStmt();
+    if(!match(COLON)){
+        error("Expected ':' for labeled statment");
     }
 
-
-    if(peek().kw_type == KEYWORD_ENUM){
-        return parseEnumDecl();
+    Node* statmente_list = parse_statement_list();
+    if(!statmente_list){
+        error("Expected statement list for labeled statement");
     }
 
-    if(peek().kw_type == KEYWORD_STRUCT){
-        return parseStructDecl();
-    }
+    labeled_stmt->addChild(ident);
+    labeled_stmt->addChild(statmente_list);
 
-    if(peek().kw_type == KEYWORD_TYPEDEF){
-        return parseTypedefDecl();
-    }
+    return labeled_stmt;
+}
 
-    // Variable declaration (e.g. int x = 5;) or struct STRUCTNAME <objname>
-    if (isTypeSpecifierStart()) {
-        return parseVarDecl();
-    }
-
-    if (peek().type == KEYWORD && peek().kw_type == KEYWORD_IF) {
-        return parseIfStmt();
-    }
-
-    if (peek().type == KEYWORD && peek().kw_type == KEYWORD_WHILE) {
-        return parseWhileStmt();
-    }
-
-    if (peek().type == KEYWORD && peek().kw_type == KEYWORD_DO) {
-        return parseDoStmt();
-    }
-
-    if (peek().type == KEYWORD && peek().kw_type == KEYWORD_FOR) {
-        return parseForStmt();
-    }
-
-    if(peek().type == KEYWORD && peek().kw_type == KEYWORD_SWITCH){
-        return parseSwitchStmt();
-    }
-
-    if(peek().type == KEYWORD && peek().kw_type == KEYWORD_CASE){
-        return parseCaseStmt();
-    }
-
-    if(peek().type == KEYWORD && peek().kw_type == KEYWORD_DEFAULT){
-        return parseDefaultStmt();
-    }
-
-    if(peek().type == KEYWORD && peek().kw_type == KEYWORD_GOTO){
-        return parseGotoStmt();
-    }
-
-    if(peek().type == KEYWORD && peek().kw_type == KEYWORD_CONTINUE){
-        advance();
-        expect(SEMICOLON);
-
-        return new ASTNode(NT_ContinueStmt);
-    }
-
-    if(peek().type == KEYWORD && peek().kw_type == KEYWORD_BREAK){
-        advance();
-        expect(SEMICOLON);
-
-        return new ASTNode(NT_BreakStmt);
-    }
-
+Node* Parser::parse_statement_list() {
+    // statement_list  ::= { statement }
+    Node* statement_list = new Node(NT_STATEMENT_LIST);
     
-    ASTNode* expr = parseExpression();
-    if(!expr) error("Expected expression statement");
-    expect(SEMICOLON);
-
-    ASTNode* exprStmt = new ASTNode(NT_ExpressionStmt);
-    exprStmt->addChild(expr);
-    exprStmt->typeInfo = expr->typeInfo;
-
-    return exprStmt;
+    // im not sure if RBRACE is correct here as it not exactly described by the EBNF see 
+    // compound_stmt	::= '{' statement_list '}'
+    while(!isAtEnd() && peek().type != TokenType::RBRACE){
+        Node* stmt = parse_statement();
+        if(!stmt){
+            error("Expected a statement in statement list");
+        }
+        statement_list->addChild(stmt);
+    }
+    
+    return statement_list;
 }
 
-ASTNode* Parser::parseCompoundStmt(){
-    advance(); // past {
-    ASTNode* block = new ASTNode(NT_CompoundStmt);
+Node* Parser::parse_statement() {
+    /*
+    statement	::=   decl_stmt
+		            | for_stmt
+		            | break_stmt
+		            | null_stmt
+		            | return_stmt
+		            | compound_stmt
+		            | continue_stmt
+		            | if_stmt
+		            | while_stmt
+		            | do_while_stmt
+		            | labeled_stmt
+		            | goto_stmt
+    */
 
-    while(!isAtEnd() && peek().type != RBRACE){
-        ASTNode* stmt = parseStatement();
-        if(!stmt){
-            error("Invalid statement in compound block");
-        }
-        block->addChild(stmt);
+
+    Node* stmt = nullptr;
+
+    if( (stmt = parse_decl_stmt()) != nullptr ) return stmt;
+    if( ( stmt = parse_for_stmt()) != nullptr ) return stmt;
+    if( ( stmt = parse_break_stmt()) != nullptr ) return stmt;
+    if( ( stmt = parse_null_stmt()) != nullptr ) return stmt;
+    if( ( stmt = parse_return_stmt()) != nullptr ) return stmt;
+    if( ( stmt = parse_compound_stmt()) != nullptr ) return stmt;
+    if( ( stmt = parse_continue_stmt()) != nullptr ) return stmt;
+    if( ( stmt = parse_if_stmt()) != nullptr ) return stmt;
+    if( ( stmt = parse_while_stmt()) != nullptr ) return stmt;
+    if( ( stmt = parse_do_while_stmt()) != nullptr ) return stmt;
+    if( ( stmt = parse_labeled_stmt()) != nullptr ) return stmt;
+    if( ( stmt = parse_goto_stmt()) != nullptr ) return stmt;
+
+    return nullptr;
+
+}
+
+Node* Parser::parse_compound_stmt() {
+    // compound_stmt	::= '{' statement_list '}'
+
+    Node* compound_stmt = new Node(NT_COMPOUND_STMT);
+    
+    if(!match(LBRACE)){
+        delete compound_stmt;
+        return nullptr;
     }
+
+    Node* stmt_list = parse_statement_list();
+    compound_stmt->addChild(stmt_list);
 
     if(!match(RBRACE)){
-        error("Expeced closing '}' at end of compound statement");
+        delete compound_stmt;
+        error("Error: Expected a closing brace after compound statement");
     }
 
-    return block;
+    return compound_stmt;
 }
 
-ASTNode* Parser::parseReturnStmt(){
-    advance(); // past return kw
-    ASTNode* returnNode = new ASTNode(NT_ReturnStmt);
+Node* Parser::parse_goto_stmt() {
+    // goto_stmt	::= kw_goto identifier ';'
+    Node* goto_stmt = new Node(NT_GOTO_STMT);
 
-    ASTNode* expr; 
-    if(peek().type != SEMICOLON){
-        expr = parseExpression();
-        if(!expr) error("Expected expression after return");
-        returnNode->addChild(expr);
-    }else{
-        expr = new ASTNode(NT_None);
-        expr->typeInfo.base = BT_VOID;
+    Node* gotoKw = new Node(NT_KW_STATIC, "goto");
+    goto_stmt->addChild(gotoKw);
+
+    Node* ident = parse_identifier();
+    if(!ident){
+        error("Expected an identifier for goto statement");
     }
-
-    returnNode->typeInfo = expr->typeInfo;
 
     expect(SEMICOLON);
-    return returnNode;
+
+    return goto_stmt;
 }
-ASTNode* Parser::parseVarDecl(){
-    ASTNode* decl = new ASTNode(NT_Declaration);
 
-    ASTNode* type = parseTypeSpecifier();
-    Type typeInfo = type->typeInfo;
+Node* Parser::parse_null_stmt() {
+    // null_stmt	::= ';'
+    if(match(SEMICOLON)) return new Node(NT_NULL_STMT);
+    return nullptr;
+}
 
-    ASTNode* name = parseIdentifier();
-    if (!name) {
-        error("Expected identifier in declaration, got: " + peek().str());
+Node* Parser::parse_return_stmt() {
+    // return_stmt	::= kw_return expression ';'
+
+    Node* return_stmt = new Node(NT_RETURN_STMT);
+
+    if(!match_kw(KEYWORD_RETURN)){
+        delete return_stmt;
+        return nullptr;
     }
 
-    // Handle array subscripting after identifier (multi-dimensional allowed)
-    while (match(LBRACKET)) {
-        ASTNode* sizeExpr = nullptr;
-        if (peek().type != RBRACKET) {
-            sizeExpr = parseExpression(); // optional size
-        }
-        expect(RBRACKET);
-
-        ASTNode* arraySub = new ASTNode(NT_ArraySubscripting);
-        arraySub->addChild(name); // base
-        if (sizeExpr)
-            arraySub->addChild(sizeExpr);
-
-        // Record this dimension in typeInfo
-        if (sizeExpr && sizeExpr->getType() == NT_Literal) {
-            // You could evaluate this to int, for now just push dummy value
-            typeInfo.arrayDimensions.push_back(std::stoi(sizeExpr->getValue()));
-        } else {
-            // Flexible array → push -1 or 0 to mark unknown size
-            typeInfo.arrayDimensions.push_back(-1);
-        }
-
-        name = arraySub; // chain arrays
+    Node* expr = parse_expression();
+    if(!expr){
+        error("Expected an expression for return statement");
     }
 
-    decl->addChild(type);
-    decl->addChild(name);
-    decl->typeInfo = typeInfo;
+    expect(SEMICOLON);
+
+    return return_stmt;
+}
+
+Node* Parser::parse_continue_stmt() {
+    // continue_stmt	::= kw_continue ';'
+    if(!match_kw(KEYWORD_CONTINUE)) return nullptr;
+    expect(SEMICOLON);
+
+    return new Node(NT_CONTINUE_STMT);
+}
+
+Node* Parser::parse_break_stmt() {
+    // break_stmt	::= kw_break ';'
+    if(!match_kw(KEYWORD_BREAK)) return nullptr;
+    expect(SEMICOLON);
+
+    return new Node(NT_BREAK_STMT);
+}
+
+Node* Parser::parse_if_stmt() {
+    // if_stmt		::= kw_if '(' expr_list ')' compound_stmt { kw_else [ '(' expr_list ')' ] compound_stmt }
+    Node* if_stmt = new Node(NT_IF_STMT);
+
+    if(!match_kw(KEYWORD_IF)) return nullptr;
+    
+    expect(LPAREN);
+    Node* cond = parse_expr_list();
+    expect(RPAREN);
+
+    Node* body = parse_compound_stmt();
+
+    if_stmt->addChild(cond);
+    if_stmt->addChild(body);
+
+    if(match_kw(KEYWORD_ELSE)){
+
+        if(peek().type == LPAREN){
+            advance(); // consume '('
+            Node* elseCond = parse_expr_list();
+            expect(RPAREN);
+            if_stmt->addChild(elseCond);
+        }
+
+        Node* elseBody = parse_compound_stmt();
+        if_stmt->addChild(elseBody);
+
+    }
+
+    return if_stmt;
+}
+
+Node* Parser::parse_while_stmt() {
+    // while_stmt	::= kw_while '(' expr_list ')' compound_stmt
+    if(!match_kw(KEYWORD_WHILE)) return nullptr;
+
+    Node* while_stmt = new Node(NT_WHILE_STMT);
+    
+    expect(LPAREN);
+    Node* cond = parse_expr_list();
+    expect(RPAREN);
+
+    Node* body = parse_compound_stmt();
+
+    while_stmt->addChild(cond);
+    while_stmt->addChild(body);
+
+    return while_stmt;
+}
+
+Node* Parser::parse_do_while_stmt() {
+    // do_while_stmt	::= kw_do compound_stmt kw_while '(' expr_list ')' ';'
+    if(!match_kw(KEYWORD_DO)) return nullptr;
+
+    Node* body = parse_compound_stmt();
+    if(!body){
+        error("Expected body for do-while statement");
+    }
+
+    if(!match_kw(KEYWORD_WHILE)){
+        error("Expected while keyword after body in do-while statement");
+    }
+
+    expect(LPAREN);
+    Node* cond = parse_expr_list();
+    expect(RPAREN);
+
+    expect(SEMICOLON);
+
+    Node* do_while_stmt = new Node(NT_DO_WHILE_STMT);
+    do_while_stmt->addChild(body);
+    do_while_stmt->addChild(cond);
+
+    return do_while_stmt;
+}
+
+Node* Parser::parse_for_stmt() {
+    // for_stmt	::= kw_for '(' assign_list ';' expr_list ';' expr_list ')' compound_stmt
+    if(!match_kw(KEYWORD_FOR)) return nullptr;
+
+    expect(LPAREN);
+
+    Node* init = parse_assign_list();
+    expect(SEMICOLON);
+
+    Node* cond = parse_expr_list();
+    expect(SEMICOLON);
+
+    Node* inc = parse_expr_list();
+
+    expect(RPAREN);
+
+    Node* body = parse_compound_stmt();
+
+    Node* for_stmt = new Node(NT_FOR_STMT);
+
+    for_stmt->addChild(init);
+    for_stmt->addChild(cond);
+    for_stmt->addChild(inc);
+    for_stmt->addChild(body);
+
+    return for_stmt;
+}
+
+Node* Parser::parse_decl_stmt() {
+    /*
+    decl_stmt	::=   assign_list ';'
+		            | tyy_defn ';'
+		            | fun_signature ';'
+    */
+
+
+    size_t backup = pos;
+
+    // Try assign_list ';'
+    if(Node* assign = parse_assign_list()){
+        if(match(SEMICOLON)){
+            Node* stmt = new Node(NT_DECL_STMT);
+            stmt->addChild(assign);
+            return stmt;
+        }
+        pos = backup;
+    } else {
+        pos = backup;
+    }
+
+    // try tyy_defn ';'
+    if(Node* defn = parse_tyy_defn()){
+        if(match(SEMICOLON)){
+            Node* stmt = new Node(NT_DECL_STMT);
+            stmt->addChild(defn);
+            return stmt;
+        }
+        pos = backup;
+    }else{
+        pos = backup;
+    }
+
+    // Try fun_signature ';' (for function declaration without a body)
+    if(Node* signature = parse_fun_signature()){
+        if(match(SEMICOLON)){
+            Node* stmt = new Node(NT_DECL_STMT);
+            stmt->addChild(signature);
+            return stmt;
+        }
+        pos = backup;
+    }else{
+        pos = backup;
+    }
+
+    return nullptr;
+}
+
+
+
+Node* Parser::parse_assign_list(){
+    // assign_list 	::= assign_stmt { ',' assign_stmt }
+
+    Node* first = parse_assign();
+    if(!first) return nullptr;
+
+    Node* assign_list = new Node(NT_ASSIGN_LIST);
+    assign_list->addChild(first);
+
+    while(match(COMMA)){
+        Node* next = parse_assign();
+        if(!next) error("Expected assigment after ',' in assign list");
+        assign_list->addChild(next);
+    }
 
     
+    return assign_list;
+}
+Node* Parser::parse_assign(){
+    /*
+    assign		::=   dyn_init
+		            | const_init
+		            | comp_literal
+    */
+    Node* assign = new Node(NT_ASSIGN);
+
+    
+    if(Node* dyn_init = parse_dyn_init()){
+        assign->addChild(dyn_init);
+    }else if(Node* const_init = parse_const_init()){
+        assign->addChild(const_init);
+    }else if(Node* comp_literal = parse_comp_literal()){
+        assign->addChild(comp_literal);
+    }else{
+        delete assign;
+        return nullptr;
+    }
+
+
+     
+    return assign;
+}
+Node* Parser::parse_comp_init(){
+    // comp_init	::= [ tyy_decl ] lhs_id [ '=' [ tyy_cast ] comp_literal ]
+    Node* comp_init = new Node(NT_COMP_INIT);
+
+    if(Node* tyy_decl = parse_tyy_decl()){
+        comp_init->addChild(tyy_decl);
+    }
+
+    if(Node* lhs_id = parse_lhs_id()){
+        comp_init->addChild(lhs_id);
+    }else{
+        delete comp_init;
+        return nullptr;
+    }
 
     if(match(ASSIGN)){
-        ASTNode* initNode = new ASTNode(NT_Initializer);
+        Node* assignNode = new Node(NT_ASSIGN);
 
-        if(peek(0).type == LBRACE){
-            advance();
-            ASTNode* initList = new ASTNode(NT_ExpressionList);
-            initList->typeInfo.base = BT_INIT_LIST;
 
-            if (!match(TokenType::RBRACE)) {
-                while (true) {
-                    ASTNode* element = parseExpression();
-                    initList->addChild(element);
+        if(Node* tyy_cast = parse_tyy_cast()){
+            assignNode->addChild(tyy_cast);
+        }
 
-                    if (match(TokenType::RBRACE)) break;
-                    expect(TokenType::COMMA);
-                }
-            }
-
-            initNode->typeInfo = initList->typeInfo;
-
-            initNode->addChild(initList);
+        if(Node* comp_literal = parse_comp_literal()){
+            assignNode->addChild(comp_literal);
         }else{
-            ASTNode* expr = parseExpression();
-            if(!expr) error("Expected initializer expression");
-
-            initNode->typeInfo = expr->typeInfo;
-            initNode->addChild(expr);
+            error("Expected compound literal after '='");
         }
 
-        decl->addChild(initNode);
+        comp_init->addChild(assignNode);
+
     }
 
+
+
+    return comp_init;
+}
+Node* Parser::parse_dyn_init(){
+    // dyn_init	::= [ tyy_decl ] lhs_id [ '=' [ tyy_cast ] expression ]
+    Node* dyn_init = new Node(NT_DYN_INIT);
     
-
-
-    // Add variable to symbol table
-    Symbol sym;
-    sym.kind = SYM_VARIABLE;
-    sym.name = name->getValue(); // works even if name is wrapped in ArraySubscripting → its first child is Identifier
-
-    // If name is ArraySubscripting, get the base identifier name
-    ASTNode* baseNameNode = name;
-    while (baseNameNode->getType() == NT_ArraySubscripting) {
-        baseNameNode = baseNameNode->getChildren()[0]; // first child is base
+    if(Node* tyy_decl = parse_tyy_decl()){
+        dyn_init->addChild(tyy_decl);
     }
 
-    sym.name = baseNameNode->getValue();
-    sym.typeInfo = typeInfo;
-
-    sym.scope = currentFunction;
-
-    // Now insert
-    defineSymbol(sym);
-
-
-    expect(SEMICOLON);
-    return decl;
-}
-ASTNode* Parser::parseIfStmt(){
-    advance(); // skip 'if'
-    expect(LPAREN);
-    ASTNode* cond = parseExpression();
-    expect(RPAREN);
-    ASTNode* trueStmt = parseStatement();
-    ASTNode* ifStmt = new ASTNode(NT_IfStmt);
-    ifStmt->addChild(cond);
-    ifStmt->addChild(trueStmt);
-
-    if (peek().type == KEYWORD && peek().kw_type == KEYWORD_ELSE) {
-        advance(); // skip 'else'
-        ASTNode* falseStmt = parseStatement();
-        ifStmt->addChild(falseStmt);
+    if(Node* lhs_id = parse_lhs_id()){
+        dyn_init->addChild(lhs_id);
+    }else{
+        delete dyn_init;
+        return nullptr;
     }
 
-    return ifStmt;
-}
-ASTNode* Parser::parseWhileStmt(){
-    advance(); // skip 'while'
-    expect(LPAREN);
-    ASTNode* cond = parseExpression();
-    expect(RPAREN);
-    ASTNode* body = parseStatement();
-    ASTNode* whileStmt = new ASTNode(NT_WhileStmt);
-    whileStmt->addChild(cond);
-    whileStmt->addChild(body);
-    return whileStmt;
-}
-ASTNode* Parser::parseDoStmt(){
-    advance(); // skip 'do'
-    ASTNode* body = parseStatement();
-    if (peek().type != KEYWORD || peek().kw_type != KEYWORD_WHILE) {
-        error("Expected 'while' after 'do' body");
-    }
-    advance(); // skip 'while'
-    expect(LPAREN);
-    ASTNode* cond = parseExpression();
-    expect(RPAREN);
-    expect(SEMICOLON);
-    ASTNode* doStmt = new ASTNode(NT_DoStmt);
-    doStmt->addChild(body);
-    doStmt->addChild(cond);
-    return doStmt;
-}
-ASTNode* Parser::parseForStmt(){
-    advance(); // skip 'for'
-    expect(LPAREN);
+    if(match(ASSIGN)){
+        Node* assignNode = new Node(NT_ASSIGN);
 
-    ASTNode* forStmt = new ASTNode(NT_ForStmt);
 
-    // Parse initializer (can be empty)
-    // Parse initializer (can be a declaration or expression)
-    if (peek().type != SEMICOLON) {
-        ASTNode* init = nullptr;
-        if (peek().type == KEYWORD && getTypeSpec(peek().value) != TS_NONE) {
-            init = parseStatement(); // Will consume the semicolon
-            // Remove the last child (ExpressionStmt) if you want to avoid nesting
-        } else {
-            init = parseExpression();
-            expect(SEMICOLON);
+        if(Node* tyy_cast = parse_tyy_cast()){
+            assignNode->addChild(tyy_cast);
         }
-        forStmt->addChild(init);
-    } else {
-        expect(SEMICOLON);
-        forStmt->addChild(nullptr);
+
+        if(Node* expr = parse_expression()){
+            assignNode->addChild(expr);
+        }else{
+            error("Expected compound literal after '='");
+        }
+
+        dyn_init->addChild(assignNode);
+
     }
+
+    return dyn_init;
+}
+Node* Parser::parse_const_init(){
+    // const_init	::= [ tyy_decl ] lhs_id [ '=' [ tyy_cast ] const_literal ]
+    Node* const_init = new Node(NT_CONST_INIT);
+
+    if(Node* tyy_decl = parse_tyy_decl()){
+        const_init->addChild(tyy_decl);
+    }
+
+    if(Node* lhs_id = parse_lhs_id()){
+        const_init->addChild(lhs_id);
+    }else{
+        delete const_init;
+        return nullptr;
+    }
+
+    if(match(ASSIGN)){
+        Node* assignNode = new Node(NT_ASSIGN);
+
+
+        if(Node* tyy_cast = parse_tyy_cast()){
+            assignNode->addChild(tyy_cast);
+        }
+
+        if(Node* lit = parse_const_literal()){
+            assignNode->addChild(lit);
+        }else{
+            error("Expected compound literal after '='");
+        }
+
+        const_init->addChild(assignNode);
+
+    }
+
+    return const_init;
+}
+Node* Parser::parse_lhs_id(){
+    // lhs_id		::= [ kw_const ] [ '*' ] ( long_index_opt | index_opt )
+    Node* lhs_id = new Node(NT_LHS_ID);
+
+    if(match_kw(KEYWORD_CONST)){
+        lhs_id->addChild(new Node(NT_KW_CONST, "const"));
+    }
+
+    if(match(TokenType::STAR)){
+        lhs_id->addChild(new Node(NT_STAR, "*"));
+    }
+
+    size_t backup = pos;
+    Node* long_index = parse_long_index_opt();
+    if(long_index){
+        lhs_id->addChild(long_index);
+        return lhs_id;
+    }
+
+    pos = backup;
+    Node* index = parse_index_opt();
+    if(index){
+        lhs_id->addChild(index);
+        return lhs_id;
+    }
+
+    error("Expected either a long_index or an index, but none was given");
+    return nullptr;
+}
+
+// expression
+Node* Parser::parse_expr_list(){
+    // expr_list	::= expression { ',' expression }
+    Node* expr_list = new Node(NT_EXPR_LIST);
+
+    Node* first = parse_expression();
+    if(!first){
+        delete expr_list;
+        return nullptr;
+    }
+    expr_list->addChild(first);
+
+    while(match(COMMA)){
+        Node* expr = parse_expression();
+        if(!expr){
+            error("Expected expression after ',' ");
+        }
+        expr_list->addChild(expr);
+    }
+
+    return expr_list;
+}
+Node* Parser::parse_expression(){
+    /*
+    expression	::=   primary
+	                | unary
+		            | binary
+		            | ternary
+		            | inplace
+		            | synthesized
+    */
     
+    Node* node = nullptr;
 
-    // Parse condition (can be empty)
-    if (peek().type != SEMICOLON) {
-        ASTNode* cond = parseExpression();
-        forStmt->addChild(cond);
-    } else {
-        forStmt->addChild(nullptr); // empty condition
-    }
-    expect(SEMICOLON);
+    if ((node = parse_ternary())) return node;
+    if ((node = parse_binary())) return node;
+    if ((node = parse_unary())) return node;
+    if ((node = parse_inplace())) return node;
+    if ((node = parse_synthesized())) return node;
+    if ((node = parse_primary())) return node;
 
-    // Parse increment (can be empty)
-    if (peek().type != RPAREN) {
-        ASTNode* update = parseExpression();
-        forStmt->addChild(update);
-    } else {
-        forStmt->addChild(nullptr); // empty update
-    }
+
+    return nullptr;
+}
+Node* Parser::parse_synthesized(){
+    // synthesized	::= '(' assign_list ')'
+
+    if(!match(LPAREN)) return nullptr;
+
+    Node* assign_list = parse_assign_list();
     expect(RPAREN);
 
-    // Loop body
-    ASTNode* body = parseStatement();
-    forStmt->addChild(body);
+    Node* synthesized = new Node(NT_SYNTHESIZED);
+    synthesized->addChild(assign_list);
 
-    return forStmt;
+    return synthesized;
 }
-ASTNode* Parser::parseSwitchStmt(){
+Node* Parser::parse_inplace(){
     /*
-    switch ( <expression> ) <statement>
+    inplace		::= long_index_opt  ( "+="  | "-=" 
+                                    | "*="  | "/=" 
+                                    | "%="  | "<<=" 
+                                    | ">>=" | "&=" 
+                                    | "|="  | "^=" ) expression
     */
-    advance(); // past switch kw
-    
-    expect(LPAREN);
-    ASTNode* expr = parseExpression();
-    expect(RPAREN);
-
-    ASTNode* body = parseStatement();
-
-    ASTNode* switchStmt = new ASTNode(NT_SwitchStmt);
-    switchStmt->addChild(expr);
-    switchStmt->addChild(body);
-
-    return switchStmt;
-}
-
-bool Parser::isConstantExpression(ASTNode* node){
-    switch (node->getType()) {
-        case NT_Literal: return true;
-
-        // constant if operand is constant 
-        case NT_UnaryExpr: return isConstantExpression(node->children.at(0));
-
-        // constant if both sides are constant
-        case NT_BinaryExpr:
-            return isConstantExpression(node->children.at(0)) &&
-                   isConstantExpression(node->children.at(1));
-
-        case NT_Identifier:
-            // Could be constant if it's an enum value or a #define (not implemented yet)
-            if (symbols.isDefined(node->getValue())) {
-              Symbol sym = symbols.getSymbol(node->getValue(), currentFunction);
-              return sym.kind == SYM_TYPEDEF ||
-                     sym.kind == SYM_ENUM_MEMBER; // You may want SYM_CONSTANT
-                                                  // or SYM_ENUM_MEMBER here!
-            }
-            return false;
-
-        default: return false;
-
+    Node* inplace = new Node(NT_INPLACE);
+    Node* long_index;
+    if(!(long_index = parse_long_index_opt())){
+        delete inplace;
+        return nullptr;
     }
-}
 
-ASTNode* Parser::parseCaseStmt(){
-    /*
-    case <const-expr> : <statement>
-    */
-    advance(); // past "case" kw
+    size_t backup = pos;
 
-    ASTNode* constExpr = parseExpression();
-    if(!isConstantExpression(constExpr)){
-        error("Case expression must be a constant expression");
+    if(peek().type == TokenType::PLUS_ASSIGN){
+        inplace->addChild(new Node(NT_INPLACE_OP, peek().value));
+    }else if(peek().type == TokenType::MINUS_ASSIGN){
+        inplace->addChild(new Node(NT_INPLACE_OP, peek().value));
+    }else if(peek().type == TokenType::STAR_ASSIGN){
+        inplace->addChild(new Node(NT_INPLACE_OP, peek().value));
+    }else if(peek().type == TokenType::SLASH_ASSIGN){
+        inplace->addChild(new Node(NT_INPLACE_OP, peek().value));
+    }else if(peek().type == TokenType::MOD_ASSIGN){
+        inplace->addChild(new Node(NT_INPLACE_OP, peek().value));
+    }else if(peek().type == TokenType::SHL_ASSIGN){
+        inplace->addChild(new Node(NT_INPLACE_OP, peek().value));
+    }else if(peek().type == TokenType::SHR_ASSIGN){
+        inplace->addChild(new Node(NT_INPLACE_OP, peek().value));
+    }else if(peek().type == TokenType::BW_AND_ASSIGN){
+        inplace->addChild(new Node(NT_INPLACE_OP, peek().value));
+    }else if(peek().type == TokenType::BW_OR_ASSIGN){
+        inplace->addChild(new Node(NT_INPLACE_OP, peek().value));
+    }if(peek().type == TokenType::BW_XOR_ASSIGN){
+        inplace->addChild(new Node(NT_INPLACE_OP, peek().value));
+    }else {
+        delete inplace;
+        error("Expected inplace operator, got: " + peek().value);
     }
+
+    advance(); // consume inplace operator
+
+    Node* expr = parse_expression();
+    if(!expr){
+        error("Expected expression after inplace operator: " + peek(-1).value);
+    }
+    inplace->addChild(expr);
+
+    return inplace;
+}
+Node* Parser::parse_ternary(){
+    // ternary		::= binary '?' binary ':' binary 
+
+    size_t backup = pos;
+
+    Node* cond = parse_binary();
+    if(!cond) return nullptr;
     
+    if(!match(QUESTION)){
+        pos = backup;
+        return nullptr;
+    }
+
+    Node* trueExpr = parse_binary();
+    if(!trueExpr){
+        error("Expected expression after '?' in ternary expression");
+    }
+
     expect(COLON);
+
+    Node* falseExpr = parse_binary();
+    if(!falseExpr){
+        error("Expected expression after ':' in ternary expression");
+    }
+
+    Node* ternary = new Node(NT_TERNARY);
+    ternary->addChild(cond);
+    ternary->addChild(trueExpr);
+    ternary->addChild(falseExpr);
     
-    ASTNode* body = parseStatement();
-
-    ASTNode* caseStmt = new ASTNode(NT_CaseStmt);
-    caseStmt->addChild(constExpr);
-    caseStmt->addChild(body);
-
-    return caseStmt;
-}
-ASTNode* Parser::parseDefaultStmt(){
-    /*
-    default: <statement>
-    */
-    advance(); // past "defalt" kw
-    expect(COLON);
-    ASTNode* body = parseStatement();
-    ASTNode* defaultStmt = new ASTNode(NT_DefaultStmt);
-    defaultStmt->addChild(body);
-
-    return defaultStmt;
-}
-ASTNode* Parser::parseGotoStmt(){
-    /*
-    goto <identifier>
-    */
-    advance();
-    ASTNode* ident = parseIdentifier();
-    ASTNode* gotoStmt = new ASTNode(NT_GotoStmt);
-    gotoStmt->addChild(ident);
-    expect(SEMICOLON);
-
-    return gotoStmt;
+    return ternary;
 }
 
-ASTNode* Parser::parseExpression() {
-    if (peek().kw_type == KEYWORD_SIZEOF) {
-        return parseSizeofExpr();
-    }
+// binary expression
+Node* Parser::parse_binary(){
+    // binary		::= logor_expr
 
-    if (peek().type == TokenType::LPAREN && getTypeSpec(peek(1).value) != TS_NONE) {
-        return parseTypeCastExpr();
-    }
+    Node* node = nullptr;
+    if( (node = parse_logor_expr()) ) return node;
 
-    if(peek().type == TokenType::QUESTION){
-        return parseTernaryExpr();
-    }
-    
-    if (
-        peek().type == TokenType::MINUS || 
-        peek().type == TokenType::NOT || 
-        peek().type == TokenType::BIT_NOT || 
-        peek().type == TokenType::STAR ||
-        peek().type == TokenType::BIT_AND ||
-        peek().type == TokenType::INCREMENT ||
-        peek().type == TokenType::DECREMENT 
-    ) {
-        return parseUnaryExpr();
-    }
-
-    return parseBinaryExpr();
-}
-
-ASTNode* Parser::parseSizeofExpr(){
-    advance(); // sizeof
-    expect(LPAREN);
-    ASTNode* expr = parseExpression();
-    expect(RPAREN);
-    ASTNode* sizeofExpr = new ASTNode(NT_SizeofExpr);
-    sizeofExpr->addChild(expr);
-    sizeofExpr->typeInfo.base = BT_INT; // unsinged int
-    sizeofExpr->typeInfo.name = "unsigned"; // temp workaround
-    return sizeofExpr;
-}
-ASTNode* Parser::parseTypeCastExpr(){
-    expect(LPAREN);
-    ASTNode* type = parseTypeSpecifier();
-    expect(RPAREN);
-    ASTNode* expr = parsePrimary();
-    ASTNode* cast = new ASTNode(NT_TypeCastExpr);
-    cast->addChild(type);
-    cast->addChild(expr);
-    cast->typeInfo = type->typeInfo;
-    return cast;
-}
-
-ASTNode* Parser::parseUnaryExpr(){
-    Token op = advance();
-    ASTNode* operand = parsePrimary();
-    ASTNode* node = new ASTNode(NT_UnaryExpr, op.value);
-
-    if(op.type == BIT_AND){
-        // address of -> pointerLevel++;
-        node->typeInfo.pointerLevel++;
-    }
-
-    if (op.type == TokenType::STAR) {
-        if (operand->typeInfo.pointerLevel > 0) {
-            node->typeInfo.pointerLevel--;
-        } else {
-            node->typeInfo.base = BT_UNKNOWN;
-        }
-    }
-
-
-    node->addChild(operand);
-    node->typeInfo = operand->typeInfo;
     return node;
 }
+Node* Parser::parse_logor_expr(){
+    // logor_expr	::= logand_expr "||" logor_expr
+    Node* left = parse_logand_expr();
+    if(!left) return nullptr;
 
-ASTNode* Parser::parseTernaryExpr() {
-    
-}
+    while(match(OR)){
+        Node* right = parse_logand_expr();
+        if(!right) error("Expected expression after '||' ");
 
-int Parser::getPrecedence(TokenType type) {
-    switch (type) {
-        case TokenType::ASSIGN:
-        case TokenType::PLUS_ASSIGN:
-        case TokenType::MINUS_ASSIGN:
-        case TokenType::STAR_ASSIGN:
-        case TokenType::SLASH_ASSIGN:
-            return 1; // lowest precedence (right-associative)
-
-        case TokenType::OR: return 2;
-        case TokenType::AND: return 3;
-
-        case TokenType::EQ:
-        case TokenType::NEQ:
-            return 4;
-
-        case TokenType::LT:
-        case TokenType::LTE:
-        case TokenType::GT:
-        case TokenType::GTE:
-            return 5;
-
-        case TokenType::PLUS:
-        case TokenType::MINUS:
-            return 6;
-
-        case TokenType::STAR:
-        case TokenType::SLASH:
-        case TokenType::PERCENT:
-            return 7;
-
-        default:
-            return -1; // not a binary operator
+        Node* op = new Node(NT_LOGOR_EXPR, "||");
+        op->addChild(left);
+        op->addChild(right);
+        left = op;
     }
+
+    return left;
 }
+Node* Parser::parse_logand_expr(){
+    // logand_expr	::= bitor_expr "&&" logand_expr
+    Node* left = parse_bitor_expr();
+    if(!left) return nullptr;
 
-bool Parser::isRightAssociative(TokenType type) {
-    return (type == TokenType::ASSIGN ||
-            type == TokenType::PLUS_ASSIGN ||
-            type == TokenType::MINUS_ASSIGN ||
-            type == TokenType::STAR_ASSIGN ||
-            type == TokenType::SLASH_ASSIGN);
+    while(match(AND)){
+        Node* right = parse_bitor_expr();
+        if(!right) error("Expected expression after '&&' ");
+
+        Node* op = new Node(NT_LOGAND_EXPR, "&&");
+        op->addChild(left);
+        op->addChild(right);
+        left = op;
+    }
+
+    return left;
 }
+Node* Parser::parse_bitor_expr(){
+    // bitor_expr	::= bitxor_expr '|' bitor_expr
 
-ASTNode* Parser::parseBinaryExpr(int minPrec) {
-    ASTNode* left = parsePrimary();
+    Node* left = parse_bitxor_expr();
+    if(!left) return nullptr;
 
-    while (true) {
-        Token op = peek();
-        int prec = getPrecedence(op.type);
-        if (prec < minPrec) break;
+    while(match(BIT_OR)){
+        Node* right = parse_bitxor_expr();
+        if(!right) error("Expected expression after '|' ");
 
-        advance();
+        Node* op = new Node(NT_BITOR_EXPR, "|");
+        op->addChild(left);
+        op->addChild(right);
+        left = op;
+    }
 
-        // Right-associative operators need (prec) vs (prec+1)
-        int nextMinPrec = prec + (isRightAssociative(op.type) ? 0 : 1);
-        ASTNode* right = parseBinaryExpr(nextMinPrec);
+    return left;
+}
+Node* Parser::parse_bitxor_expr(){
+    // bitxor_expr	::= bitand_expr '^' bitxor_expr
 
-        ASTNode* binExpr = new ASTNode(
-            op.type == TokenType::ASSIGN ? NT_Assignment : NT_BinaryExpr,
-            op.value
-        );
-        
+    Node* left = parse_bitand_expr();
+    if(!left) return nullptr;
+
+    while(match(BIT_XOR)){
+        Node* right = parse_bitand_expr();
+        if(!right) error("Expected expression after '^' ");
+
+        Node* op = new Node(NT_BITXOR_EXPR, "^");
+        op->addChild(left);
+        op->addChild(right);
+        left = op;
+    }
+
+    return left;
+}
+Node* Parser::parse_bitand_expr(){
+    // bitand_expr	::= eqop_expr '&' bitand_expr
+    Node* left = parse_eqop_expr();
+    if(!left) return nullptr;
+
+    while(match(BIT_AND)){
+        Node* right = parse_eqop_expr();
+        if(!right) error("Expected expression after '&' ");
+
+        Node* op = new Node(NT_BITAND_EXPR, "&");
+        op->addChild(left);
+        op->addChild(right);
+        left = op;
+    }
+
+    return left;
+}
+Node* Parser::parse_eqop_expr(){
+    /*
+    eqop_expr	::= relop_expr "==" eqop_expr
+	    	      | relop_expr "!=" eqop_expr
+    */
+    Node* left = parse_relop_expr();
+    if(!left) return nullptr;
 
 
-        if (op.type == TokenType::EQ ||
-            op.type == TokenType::NEQ ||
-            op.type == TokenType::LT ||
-            op.type == TokenType::LTE ||
-            op.type == TokenType::GT ||
-            op.type == TokenType::GTE ||
-            op.type == TokenType::AND ||
-            op.type == TokenType::OR) {
-            binExpr->typeInfo.base = BT_INT;
+    while(peek().type == EQ || peek().type == NEQ){
+        Token opTok = advance();
+        Node* right = parse_relop_expr();
+
+        if(!right){
+            error("Expected expression after '" + opTok.value + "'");
         }
-        else if (left->typeInfo.base == BT_FLOAT || right->typeInfo.base == BT_FLOAT) {
-            binExpr->typeInfo.base = BT_FLOAT;
-        } else if (left->typeInfo.base == BT_INT || right->typeInfo.base == BT_INT) {
-            binExpr->typeInfo.base = BT_INT;
-        } else {
-            binExpr->typeInfo.base = BT_UNKNOWN;
+
+        Node* op = new Node(NT_EQOP_EXPR, opTok.value);
+        op->addChild(left);
+        op->addChild(right);
+        left = op;
+    }
+
+    return left;
+}
+Node* Parser::parse_relop_expr(){
+    /*
+    relop_expr	::= shift_expr '<' relop_expr
+		          | shift_expr '>' relop_expr
+		          | shift_expr "<=" relop_expr
+		          | shift_expr ">=" relop_expr
+    */
+
+    Node* left = parse_shift_expr();
+    if(!left) return nullptr;
+
+
+    while(peek().type == TokenType::LT || 
+          peek().type == TokenType::GT ||
+          peek().type == TokenType::LTE ||
+          peek().type == TokenType::GTE
+        ){
+        Token opTok = advance();
+        Node* right = parse_shift_expr();
+
+        if(!right){
+            error("Expected expression after '" + opTok.value + "'");
         }
 
-        if (op.type == TokenType::ASSIGN) {
-            binExpr->typeInfo = left->typeInfo;
-        }
-
-        binExpr->addChild(left);
-        binExpr->addChild(right);
-
-        left = binExpr;
+        Node* op = new Node(NT_RELOP_EXPR, opTok.value);
+        op->addChild(left);
+        op->addChild(right);
+        left = op;
     }
 
     return left;
 }
 
-bool isPostFixOperator(TokenType type){
-    bool ret = (type == TokenType::INCREMENT ||
-    type == TokenType::DECREMENT ||
-    type == TokenType::ARROW ||
-    type == TokenType::DOT);
-    return ret;
+Node* Parser::parse_shift_expr(){
+    /*
+    shift_expr	::= add_expr ">>" shift_expr
+		          | add_expr "<<" shift_expr
+    */
+    Node* left = parse_add_expr();
+    if(!left) return nullptr;
+
+
+    while(peek().type == SHIFT_RIGHT || peek().type == SHIFT_LEFT){
+        Token opTok = advance();
+        Node* right = parse_add_expr();
+
+        if(!right){
+            error("Expected expression after '" + opTok.value + "'");
+        }
+
+        Node* op = new Node(NT_SHIFT_EXPR, opTok.value);
+        op->addChild(left);
+        op->addChild(right);
+        left = op;
+    }
+
+    return left;
 }
 
-ASTNode* Parser::parseAtom() {
-    Token tok = peek();
+Node* Parser::parse_add_expr(){
+    /*
+    add_expr	::= mult_expr '+' add_expr
+		          | mult_expr '-' add_expr
+    */
+    Node* left = parse_mult_expr();
+    if(!left) return nullptr;
 
-    // Identifiers (e.g., variable names, maybe typedefs later)
-    if (tok.type == TokenType::IDENTIFIER) {
-        advance();
-        ASTNode* node = new ASTNode(NT_Identifier, tok.value);
 
-        // Look up the identifier in symbol table and assign type
-        if (symbols.isDefined(tok.value)) {
-            Symbol sym = symbols.getSymbol(tok.value, currentFunction);
-            SymbolKind kind = sym.kind;
+    while(peek().type == PLUS || peek().type == MINUS){
+        Token opTok = advance();
+        Node* right = parse_mult_expr();
 
-            if(peek().type == TokenType::LBRACKET){
-                node->typeInfo.base = BT_ARRAY;
-            }
-
-            else if (kind == SYM_VARIABLE 
-                || kind == SYM_TYPEDEF 
-                || kind == SYM_FUNCTION 
-                || kind == SYM_PARAMETER 
-                || kind == SYM_ENUM_MEMBER
-            ) {
-                
-                Symbol sym = symbols.getSymbol(tok.value, currentFunction);
-                node->typeInfo = sym.typeInfo;
-                
-            }
-        } else {
-            node->typeInfo.base = BT_UNKNOWN; // unknown identifier — will trigger error later
-            // error("Variable " + tok.value + " not defined in current scope: " + ((currentScopeName.empty()) ? "<global>" : currentScopeName));
+        if(!right){
+            error("Expected expression after '" + opTok.value + "'");
         }
 
-        return node;
+        Node* op = new Node(NT_ADD_EXPR, opTok.value);
+        op->addChild(left);
+        op->addChild(right);
+        left = op;
     }
 
-    // Literals
-    if (
-        tok.type == TokenType::INTEGER_LITERAL ||
-        tok.type == TokenType::FLOAT_LITERAL ||
-        tok.type == TokenType::CHAR_LITERAL ||
-        tok.type == TokenType::STRING_LITERAL
-    ) {
-        advance();
-        ASTNode* lit = new ASTNode(NT_Literal, tok.value);
-        switch (tok.type) {
-            default: lit->typeInfo.base = BT_UNKNOWN; break;
-            case INTEGER_LITERAL: lit->typeInfo.base = BT_INT; break;
-            case FLOAT_LITERAL: lit->typeInfo.base = BT_FLOAT; break;
-            case CHAR_LITERAL: lit->typeInfo.base = BT_CHAR; break;
-            case STRING_LITERAL:
+    return left;
+}
+Node* Parser::parse_mult_expr(){
+    /*
+    mult_expr	::= unary '*' multi_expr
+		          | unary '/' multi_expr
+		          | unary '%' mutli_expr
+    */
 
-                ///// temporary work around
-                lit->typeInfo.base = BT_CHAR;
-                lit->typeInfo.pointerLevel = 1;
-                lit->typeInfo.arrayDimensions.push_back(tok.value.size());
-                /////
+    Node* left = parse_unary();
+    if(!left) return nullptr;
 
-                break;
+
+    while(peek().type == STAR || peek().type == SLASH || peek().type == PERCENT){
+        Token opTok = advance();
+        Node* right = parse_unary();
+
+        if(!right){
+            error("Expected expression after '" + opTok.value + "'");
         }
-        return lit; 
+
+        Node* op = new Node(NT_MULT_EXPR, opTok.value);
+        op->addChild(left);
+        op->addChild(right);
+        left = op;
     }
 
-    // Parenthesized expression
-    if (tok.type == TokenType::LPAREN) {
-        advance(); // consume '('
-        ASTNode* expr = parseExpression();
-        expect(TokenType::RPAREN);
-        return expr;
-    }
-
-    return nullptr; // no valid atom found
+    return left;
 }
 
-ASTNode* Parser::parseArgumentList(){
-    ASTNode* ArgList = new ASTNode(NT_ExpressionList);
+// unary expression
+Node* Parser::parse_unary(){
+    /*
+    unary		::= unary_plus
+		          | unary_minus
+		          | unary_1scomp
+		          | unary_2scomp
+		          | unary_lnot
+		          | unary_ref
+                  | unary_deref
+		          | unary_preinc
+		          | unary_predec
+		          | unary_postinc
+		          | unary_postdec
+                  | unary_offsetof
+		          | unary_sizeof
+    */
 
-    if (!match(TokenType::RPAREN)) {
-        while (true) {
-            ArgList->addChild(parseExpression());
-            if (match(TokenType::RPAREN)) break;
-            expect(TokenType::COMMA);
+    Node* unary = nullptr;
+
+    if( (unary = parse_unary_plus()) != nullptr) return unary;
+    if( (unary = parse_unary_1scompl()) != nullptr) return unary;
+    if( (unary = parse_unary_2scompl()) != nullptr) return unary;
+    if( (unary = parse_unary_lnot()) != nullptr) return unary;
+    if( (unary = parse_unary_ref()) != nullptr) return unary;
+    if( (unary = parse_unary_deref()) != nullptr) return unary;
+    if( (unary = parse_unary_preinc()) != nullptr) return unary;
+    if( (unary = parse_unary_predec()) != nullptr) return unary;
+    if( (unary = parse_unary_postinc()) != nullptr) return unary;
+    if( (unary = parse_unary_postdec()) != nullptr) return unary;
+    if( (unary = parse_unary_offsetof()) != nullptr) return unary;
+    if( (unary = parse_unary_sizeof()) != nullptr) return unary;
+
+    return nullptr;
+
+}
+Node* Parser::parse_unary_offsetof(){
+    // unary_offsetof	::= "offsetof" primary
+    if(!match_kw(KEYWORD_OFFSETOF)) return nullptr;
+    
+    Node* primary = parse_primary();
+    if(!primary) error("Expected primary after offsetof keyword");
+
+    Node* unary_offsetof = new Node(NT_UNARY_OFFSETOF);
+    unary_offsetof->addChild(primary);
+
+    return unary_offsetof;
+}
+Node* Parser::parse_unary_sizeof(){
+    // unary_sizeof	::= "sizeof" primary
+
+    if(!match_kw(KEYWORD_SIZEOF)) return nullptr;
+    
+    Node* primary = parse_primary();
+    if(!primary) error("Expected primary after sizeof keyword");
+
+    Node* unary_sizeof = new Node(NT_UNARY_SIZEOF);
+    unary_sizeof->addChild(primary);
+
+    return unary_sizeof;
+}
+Node* Parser::parse_unary_postdec(){
+    // unary_postdec	::= primary "--"
+
+    Node* primary = parse_primary();
+    if(!primary) return nullptr;
+
+    Node* unary_postdec = new Node(NT_UNARY_POSTDEC, "--");
+    unary_postdec->addChild(primary);
+
+    return unary_postdec;
+}
+Node* Parser::parse_unary_postinc(){
+    // unary_postinc	::= primary "++"
+
+    Node* primary = parse_primary();
+    if(!primary) return nullptr;
+
+    Node* unary_postinc = new Node(NT_UNARY_POSTINC, "++");
+    unary_postinc->addChild(primary);
+
+    return unary_postinc;
+}
+Node* Parser::parse_unary_predec(){
+    // unary_predec	::= "--" primary
+    if(!match(DECREMENT)) return nullptr;
+
+    Node* primary = parse_primary();
+    if(!primary) error("Expected primary after prefix decrement");
+
+    Node* unary_predec = new Node(NT_UNARY_PREDEC, "--");
+    unary_predec->addChild(primary);
+
+    return unary_predec;
+}
+Node* Parser::parse_unary_preinc(){
+    // unary_preinc	::= "++" primary
+    if(!match(INCREMENT)) return nullptr;
+
+    Node* primary = parse_primary();
+    if(!primary) error("Expected primary after prefix increment");
+
+    Node* unary_preinc = new Node(NT_UNARY_PREINC, "++");
+    unary_preinc->addChild(primary);
+
+    return unary_preinc;
+}
+Node* Parser::parse_unary_deref(){
+    // unary_deref	::= '*' primary
+
+    if(!match(STAR)) return nullptr;
+
+    Node* primary = parse_primary();
+    if(!primary) error("Expected primary after dereference operator");
+
+    Node* unary_deref = new Node(NT_UNARY_DEREF, "*");
+    unary_deref->addChild(primary);
+
+    return unary_deref;
+}
+Node* Parser::parse_unary_ref(){
+    // unary_ref	::= '&' primary
+
+    if(!match(BIT_AND)) return nullptr;
+
+    Node* primary = parse_primary();
+    if(!primary) error("Expected primary after reference operator");
+
+    Node* unary_ref = new Node(NT_UNARY_REF);
+    unary_ref->addChild(primary);
+
+    return unary_ref;
+}
+Node* Parser::parse_unary_lnot(){
+    // unary_lnot	::= '!' primary
+
+    if(!match(NOT)) return nullptr;
+
+    Node* primary = parse_primary();
+    if(!primary) error("Expected primary after logical not");
+
+    Node* unary_lnot = new Node(NT_UNARY_LNOT);
+    unary_lnot->addChild(primary);
+
+    return unary_lnot;
+}
+Node* Parser::parse_unary_2scompl(){
+    // unary-2scompl	::= '~' primary
+
+    if(!match(BIT_NOT)) return nullptr;
+
+    Node* primary = parse_primary();
+    if(!primary) error("Expected primary after '~' operator");
+
+    Node* unary_2scompl = new Node(NT_2SCOMPL);
+    unary_2scompl->addChild(primary);
+
+    return unary_2scompl;
+}
+Node* Parser::parse_unary_1scompl(){
+    // unary-1scompl	::= '-' primary
+
+    if(!match(MINUS)) return nullptr;
+
+    Node* primary = parse_primary();
+    if(!primary) error("Expected primary after '-' operator");
+
+    Node* unary_1scompl = new Node(NT_1SCOMPL);
+    unary_1scompl->addChild(primary);
+
+    return unary_1scompl;
+}
+Node* Parser::parse_unary_plus(){
+    // unary_plus	::= '+' primary
+
+    if(!match(PLUS)) return nullptr;
+
+    Node* primary = parse_primary();
+    if(!primary) error("Expected primary after '+' operator");
+
+    Node* plus = new Node(NT_UNARY_PLUS);
+    plus->addChild(primary);
+
+    return plus;
+}
+
+// primary
+Node* Parser::parse_primary(){
+    /*
+    primary		::=   prim_expr 
+                    | prim_funcall 
+                    | prim_literal
+                    | prim_ident
+    */
+    Node* node = nullptr;
+
+    if( (node = parse_prim_expr()) != nullptr ) return node;
+    if( (node = parse_prim_funcall()) != nullptr ) return node;
+    if( (node = parse_prim_literal()) != nullptr ) return node;
+    if( (node = parse_prim_ident()) != nullptr ) return node;
+
+    return nullptr;
+}
+Node* Parser::parse_prim_expr(){
+    // prim_expr	::= '(' expression ')'
+    if(!match(LPAREN)) return nullptr;
+
+    Node* expr = parse_expression();
+    expect(RPAREN);
+
+    Node* prim_expr = new Node(NT_PRIM_EXPR);
+    prim_expr->addChild(expr);
+
+    return prim_expr;
+}
+Node* Parser::parse_prim_funcall(){
+    // prim_funcall	::= identifier '(' expr_list ')'
+    Node* ident;
+
+    if( (ident = parse_identifier()) == nullptr ) return nullptr;
+    if(!match(LPAREN)) return nullptr;
+
+    Node* expr_list = parse_expr_list();
+    expect(RPAREN);
+
+    Node* prim_funcall = new Node(NT_PRIM_FUNCALL);
+    prim_funcall->addChild(ident);
+    prim_funcall->addChild(expr_list);
+
+    return prim_funcall;
+}
+Node* Parser::parse_prim_literal(){
+    // prim_literal	::= const_literal
+
+    Node* const_literal = parse_const_literal();
+    if(!const_literal) return nullptr;
+
+    Node* prim_literal = new Node(NT_PRIM_LITERAL);
+    prim_literal->addChild(const_literal);
+
+    return prim_literal;
+}
+Node* Parser::parse_prim_ident(){
+    /*
+    prim_ident	::= long_index_opt
+		          | index_opt
+    */
+
+    Node* node = nullptr;
+
+    if( (node = parse_long_index_opt()) != nullptr ) return node;
+    if( (node = parse_index_opt()) != nullptr ) return node;
+
+
+    return nullptr;
+}
+
+// types
+Node* Parser::parse_tyyid_pair_list(){
+    // tyyid_pair_list	::= tyyid_pair { ',' tyyid_pair }
+
+    Node* first = parse_tyyid_pair();
+    if(!first) return nullptr;
+
+    Node* list = new Node(NT_TYYID_PAIR_LIST);
+    list->addChild(first);
+
+    while(match(COMMA)){
+        Node* next = parse_tyyid_pair_list();
+        if(!next) error("Expected type-identifier pair after ','");
+        list->addChild(next);
+    }
+
+    return list;
+}
+Node* Parser::parse_tyyid_pair(){
+    // tyyid_pair	::= tyy_decl [ kw_const ] [ '*' ] identifier
+
+    Node* tyy_decl = parse_tyy_decl();
+    if(!tyy_decl) return nullptr;
+
+    
+    Node* tyyid_pair = new Node(NT_TYYID_PAIR);
+
+    if(match_kw(KEYWORD_CONST)){
+        tyyid_pair->addChild(new Node(NT_KW_CONST, "const"));
+    }
+
+    if(match(STAR)){
+        tyyid_pair->addChild(new Node(NT_STAR, "*"));
+    }
+
+    Node* ident = parse_identifier();
+    tyy_decl->addChild(ident);
+
+    return tyyid_pair;
+}
+Node* Parser::parse_tyy_lit(){
+    /*
+    tyy_lit		::= tyy_enum_lit
+		          | tyy_ext_lit
+    */
+
+
+    Node* tyy_list = nullptr;
+
+    if( (tyy_list = parse_tyy_enum_lit()) != nullptr ) return tyy_list;
+    if( (tyy_list = parse_tyy_ext_lit()) != nullptr ) return tyy_list;
+
+    return nullptr;
+}
+Node* Parser::parse_tyy_enum_lit(){
+    // tyy_enum_lit	::= '{' tyy_enum_field { ',' tyy_enum_field } '}'
+
+    if(!match(LBRACE)) return nullptr;
+
+    Node* tyy_enum_lit = new Node(NT_TYY_ENUM_LIT);
+
+    Node* tyy_enum_field = parse_tyy_enum_field();
+    tyy_enum_lit->addChild(tyy_enum_field);
+
+    while(match(COMMA)){
+        Node* next = parse_tyy_enum_field();
+        if(!next){
+            error("Expected enum field after ',' for enum literal");
+        }
+        tyy_enum_lit->addChild(next);
+    }
+
+    return tyy_enum_lit;
+}
+Node* Parser::parse_tyy_enum_field(){
+    // tyy_enum_field	::= identifier [ '=' int_const ]
+
+    size_t backup = pos;
+    Node* ident = parse_identifier();
+    if(!ident){
+        pos = backup;
+        return nullptr;
+    }
+    
+    Node* tyy_enum_field = new Node(NT_TYY_ENUM_FIELD);
+    tyy_enum_field->addChild(ident);
+
+    if(match(ASSIGN)){
+        Node* int_const = parse_int_const();
+        if(!int_const) error("Expected int constant after '=' for enum field");
+        tyy_enum_field->addChild(int_const);
+    }
+
+    return tyy_enum_field;
+}
+
+Node* Parser::parse_tyy_ext_lit(){
+    // tyy_ext_lit	::= '{' tyy_ext_field { ';' tyy_ext_field } '}'
+
+    if(!match(LBRACE)) return nullptr;
+
+    size_t backup = pos;
+    Node* tyy_ext_field = parse_tyy_ext_field();
+    if(!tyy_ext_field){
+        pos = backup;
+        return nullptr;
+    }
+
+    Node* tyy_ext_lit = new Node(NT_TYY_EXT_LIT);
+    tyy_ext_lit->addChild(tyy_ext_field);
+
+    while(match(SEMICOLON)){
+        Node* next = parse_tyy_ext_field();
+        if(!next){
+            error("Expected type-identifier ext field after semicolon for type-identifier ext literal");
+        }
+        tyy_ext_lit->addChild(next);
+    }
+
+
+    return tyy_ext_lit;
+}
+Node* Parser::parse_tyy_ext_field(){
+    // tyy_ext_field	::= tyy_decl identifier
+
+    size_t backup = pos;
+    Node* decl = parse_tyy_decl();
+    if(!decl){
+        pos = backup;
+        return nullptr;
+    }
+
+    Node* ident = parse_identifier();
+    if(!ident){
+        error("Expected identifier for type identifier ext field");
+    }
+
+    Node* tyy_ext_field = new Node(NT_TYY_EXT_FIELD);
+    tyy_ext_field->addChild(decl);
+    tyy_ext_field->addChild(ident);
+
+    return tyy_ext_field;
+}
+Node* Parser::parse_tyy_decl(){
+    // tyy_decl	::= [ tyy_storage ] [ tyy_qualifier ] [ '*' ] tyy_body
+
+    size_t backup = pos;
+    Node* tyy_decl = new Node(NT_TYY_DECL);
+
+    Node* tyy_storage = parse_tyy_storage();
+    if(tyy_storage){
+        tyy_decl->addChild(tyy_storage);
+    }
+
+    Node* tyy_qualifier = parse_tyy_qualifier();
+    if(tyy_qualifier){
+        tyy_decl->addChild(tyy_qualifier);
+    }
+
+    if(match(STAR)){
+        tyy_decl->addChild(new Node(NT_STAR, "*"));
+    }
+
+    Node* tyy_body = parse_tyy_body();
+    if(!tyy_body){
+        pos = backup;
+        return nullptr;
+    }
+    tyy_decl->addChild(tyy_body);
+
+    return tyy_decl;
+}
+Node* Parser::parse_tyy_defn(){
+    // tyy_defn	::= kw_typedef tyy_body tyy_alias
+
+
+    if(!match_kw(KEYWORD_TYPEDEF)) return nullptr;
+
+    Node* tyy_body = parse_tyy_body();
+    if(!tyy_body) {
+        error("Expected body for type definition");
+    }
+
+    Node* tyy_alias = parse_tyy_alias();
+    if(!tyy_alias){
+        error("Expected alias for type definition");
+    }
+
+    Node* tyy_defn = new Node(NT_TYY_DEFN);
+    tyy_defn->addChild(tyy_body);
+    tyy_defn->addChild(tyy_alias);
+
+    return tyy_defn;
+}
+Node* Parser::parse_tyy_storage(){
+    /*
+    tyy_storage	::= kw_auto
+                  | kw_static
+                  | kw_extern
+                  | kw_register
+    */
+
+    if(match_kw(KEYWORD_AUTO)) return new Node(NT_KW_AUTO, "auto");
+    if(match_kw(KEYWORD_STATIC)) return new Node(NT_KW_STATIC, "static");
+    if(match_kw(KEYWORD_EXTERN)) return new Node(NT_KW_EXTERN, "extern");
+    if(match_kw(KEYWORD_REGISTER)) return new Node(NT_KW_REGISTER, "register");
+
+    
+    return nullptr;
+}
+Node* Parser::parse_tyy_qualifier(){
+    /*
+    tyy_qualifier	::= kw_const
+                      | kw_volatile
+                      | kw_restrict
+    */
+    if(match_kw(KEYWORD_CONST)) return new Node(NT_KW_CONST, "const");
+    if(match_kw(KEYWORD_VOLATILE)) return new Node(NT_KW_VOLATILE, "volatile");
+    if(match_kw(KEYWORD_RESTRICT)) return new Node(NT_KW_RESTRICT, "restrict");
+    
+    return nullptr;
+}
+Node* Parser::parse_tyy_cast(){
+    // tyy_cast	::= '(' tyy_ref ')'
+    if(!match(LPAREN)) return nullptr;
+
+    size_t backup = pos;
+    Node* tyy_ref = parse_tyy_ref();
+
+    if(!tyy_ref){
+        pos = backup;
+        return nullptr;
+    }
+
+    expect(RPAREN);
+
+    Node* tyy_cast = new Node(NT_TYY_CAST);
+    tyy_cast->addChild(tyy_ref);
+
+    return tyy_cast;
+}
+Node* Parser::parse_tyy_ref(){
+    // tyy_ref		::= tyy_body [ '*' ]
+
+    size_t backup = pos;
+    Node* tyy_body = parse_tyy_body();
+
+    if(!tyy_body){
+        pos = backup;
+        return nullptr;
+    }
+
+    Node* tyy_ref = new Node(NT_TYY_REF);
+    tyy_ref->addChild(tyy_body);
+
+    if(match(STAR)){
+        tyy_ref->addChild(new Node(NT_STAR, "*"));
+    }
+
+    return tyy_ref;
+}
+Node* Parser::parse_tyy_body(){
+    /*
+    tyy_body	::= tyy_base
+                  | tyy_ext
+                  | tyy_lit
+    */
+    Node* tyy_body = nullptr;
+
+    if( (tyy_body = parse_tyy_base()) != nullptr ) return tyy_body;
+    if( (tyy_body = parse_tyy_ext()) != nullptr ) return tyy_body;
+    if( (tyy_body = parse_tyy_lit()) != nullptr ) return tyy_body;
+
+    return nullptr;
+}
+Node* Parser::parse_tyy_ext(){
+    /*
+    tyy_ext		::= tyy_ext_union
+		          | tyy_ext_enum
+		          | tyy_ext_struct
+    */
+    Node* tyy_ext = nullptr;
+
+    if( (tyy_ext = parse_tyy_ext_union()) != nullptr ) return tyy_ext;
+    if( (tyy_ext = parse_tyy_ext_enum()) != nullptr ) return tyy_ext;
+    if( (tyy_ext = parse_tyy_ext_struct()) != nullptr ) return tyy_ext;
+
+    return nullptr;
+}
+Node* Parser::parse_tyy_ext_union(){
+    // tyy_ext_union	::= kw_union tyy_alias
+
+    if(!match_kw(KEYWORD_UNION)) return nullptr;
+
+    Node* alias = parse_tyy_alias();
+    if(!alias){
+        error("Expected alias for union");
+    }
+
+    Node* tyy_ext_union = new Node(NT_TYY_EXT_UNION);
+    tyy_ext_union->addChild(alias);
+
+    return tyy_ext_union;
+}
+Node* Parser::parse_tyy_ext_enum(){
+    // tyy_ext_enum	::= kw_enum tyy_alias
+
+    if(!match_kw(KEYWORD_ENUM)) return nullptr;
+
+    Node* alias = parse_tyy_alias();
+    if(!alias){
+        error("Expected alias for enum");
+    }
+
+    Node* tyy_ext_enum = new Node(NT_TYY_EXT_ENUM);
+    tyy_ext_enum->addChild(alias);
+
+    return tyy_ext_enum;
+}
+Node* Parser::parse_tyy_ext_struct(){
+    // tyy_ext_struct	::= kw_struct tyy_alias
+
+    if(!match_kw(KEYWORD_STRUCT)) return nullptr;
+
+    Node* alias = parse_tyy_alias();
+
+    if(!alias){
+        error("Expected alias for ext struct");
+    }
+
+    Node* tyy_ext_struct = new Node(NT_TYY_EXT_STRUCT);
+    tyy_ext_struct->addChild(alias);
+
+    return tyy_ext_struct;
+}
+Node* Parser::parse_tyy_alias(){
+    // tyy_alias	::= identifier
+
+    size_t backup = pos;
+    Node* ident = parse_identifier();
+
+    if(!ident){
+        pos = backup;
+        return nullptr;
+    }
+
+    Node* tyy_alias = new Node(NT_TYY_ALIAS);
+    tyy_alias->addChild(ident);
+
+    return tyy_alias;
+}
+Node* Parser::parse_tyy_base(){
+    // tyy_base	::= [ tyy_base_word ] [ tyy_base_sign ] tyy_base_body
+
+    size_t backup = pos;
+
+    
+    Node* tyy_base_word = parse_tyy_base_word();
+    if(!tyy_base_word){
+        pos = backup;
+    }
+    backup = pos;
+    
+    Node* tyy_base_sign = parse_tyy_base_sign();
+    if(!tyy_base_sign){
+        pos = backup;
+    }
+    backup = pos;
+    
+    Node* tyy_base_body = parse_tyy_base_body(); 
+    if(!tyy_base_body){
+        error("Expected base body for type identifier base");
+    }
+
+    
+    Node* tyy_base = new Node(NT_TYY_BASE);
+    if(tyy_base_word) tyy_base->addChild(tyy_base_word);
+    if(tyy_base_sign) tyy_base->addChild(tyy_base_sign);
+    tyy_base->addChild(tyy_base_body);
+
+    return tyy_base;
+}
+Node* Parser::parse_tyy_base_word(){
+    /*
+    tyy_base_word	::= kw_long
+		              | kw_short
+    */
+
+
+    Node* tyy_base_word = nullptr;
+
+    if( (match_kw(KEYWORD_LONG)) ) return new Node(NT_KW_LONG, "long");
+    if( (match_kw(KEYWORD_SHORT)) ) return new Node(NT_KW_SHORT, "short");
+
+    return nullptr;
+}
+Node* Parser::parse_tyy_base_sign(){
+    /*
+    tyy_base_sign 	::= kw_signed
+		              | kw_unsigned
+    */
+    Node* tyy_base_sign = nullptr;
+
+    if( (match_kw(KEYWORD_SIGNED)) ) return new Node(NT_KW_SIGNED, "signed");
+    if( (match_kw(KEYWORD_UNSIGNED)) ) return new Node(NT_KW_UNSIGNED, "unsigned");
+
+    return nullptr;
+}
+Node* Parser::parse_tyy_base_body(){
+    /*
+    tyy_base_body	::= kw_char
+		              | kw_int
+		              | kw_float
+		              | kw_double
+		              | kw_void
+    */
+
+
+    Node* tyy_base_body = nullptr;
+
+    if( (match_kw(KEYWORD_CHAR)) ) return new Node(NT_KW_CHAR, "char");
+    if( (match_kw(KEYWORD_INT)) ) return new Node(NT_KW_INT, "int");
+    if( (match_kw(KEYWORD_FLOAT)) ) return new Node(NT_KW_FLOAT, "float");
+    if( (match_kw(KEYWORD_DOUBLE)) ) return new Node(NT_KW_DOUBLE, "double");
+    if( (match_kw(KEYWORD_VOID)) ) return new Node(NT_KW_VOID, "void");
+
+    return nullptr;
+}
+
+// Idents
+Node* Parser::parse_long_index_opt(){
+    // long_index_opt	::= long_ident [ index ]
+
+    size_t backup = pos;
+    Node* long_ident = parse_long_ident();
+    if(!long_ident){
+        pos = backup;
+        return nullptr;
+    }
+
+    Node* long_index_opt = new Node(NT_LONG_INDEX_OPT);
+    long_index_opt->addChild(long_ident);
+
+    backup = pos;
+    Node* index = parse_index();
+    if(index){
+        long_index_opt->addChild(index);
+    }
+
+    return long_index_opt;
+}
+Node* Parser::parse_index_opt(){
+    // index_opt	::= identifier [ index ]
+
+    size_t backup = pos;
+    Node* ident = parse_identifier();
+    if(!ident){
+        pos = backup;
+        return nullptr;
+    }
+    Node* index_opt = new Node(NT_INDEX_OPT);
+    index_opt->addChild(ident);
+
+    backup = pos;
+    Node* index = parse_index();
+    if(index){
+        index_opt->addChild(index);
+    }
+
+    return index_opt;
+}
+Node* Parser::parse_index(){
+    // index		::= '[' [ long_ident | const_literal ] ']'
+
+    if(!match(LBRACKET)) return nullptr;
+
+    Node* index = new Node(NT_INDEX);
+
+    size_t backup = pos;
+
+    Node* expr = parse_long_ident();
+    if(!expr){
+        pos = backup;
+        expr = parse_const_literal();
+    }
+
+    if(expr){
+        index->addChild(expr);
+    }
+
+    if(!match(RBRACKET)){
+        delete index;
+        error("Expected ']' at end of index expression");
+    }
+
+    return index;
+}
+Node* Parser::parse_long_ident(){
+    // long_ident	::= identifier { ( dot_ident | arrow_ident ) }
+
+    size_t backup = pos;
+    Node* ident = parse_identifier();
+    if(!ident){
+        pos = backup;
+        return nullptr;
+    }
+
+    Node* long_ident = new Node(NT_LONG_IDENT);
+    long_ident->addChild(ident);
+
+    while(!isAtEnd()){
+        Node* dot = parse_dot_ident();
+        if(dot){
+            long_ident->addChild(dot);
+            continue;
+        }
+
+        Node* arrow = parse_arrow_ident();
+        if(arrow){
+            long_ident->addChild(arrow);
+            continue;
+        }
+
+        break;
+    }
+
+    return long_ident;
+}
+Node* Parser::parse_dot_ident(){
+    // dot_ident	::= identifier { '.' identifier }
+
+    size_t backup = pos;
+    Node* identifier = parse_identifier();
+    if(!identifier){
+        pos = backup;
+        return nullptr;
+    }
+
+    Node* dot_ident = new Node(NT_DOT_IDENT);
+    dot_ident->addChild(identifier);
+
+    while(match(DOT)){
+        Node* next = parse_identifier();
+        if(!next){
+            error("Expected an identfier after '.'");
+        }
+        dot_ident->addChild(next);
+    }
+
+    return dot_ident;
+}
+Node* Parser::parse_arrow_ident(){
+    // arrow_ident	::= identifier { "->" identifier }
+
+    size_t backup = pos;
+    Node* ident = parse_identifier();
+    if(!ident){
+        pos = backup;
+        return nullptr;
+    }
+
+    Node* arrow_ident = new Node(NT_ARROW_IDENT);
+    arrow_ident->addChild(ident);
+
+    while(match(ARROW)){
+        Node* next = parse_identifier();
+        if(!next){
+            error("Expected identifier after '->' ");
+        }
+        arrow_ident->addChild(next);
+    }
+
+
+    return arrow_ident;
+}
+
+// CompundLiteral
+Node* Parser::parse_comp_literal(){
+    // comp_literal	::= [ '(' tyy_decl ')' ] list_literal
+
+    Node* comp_literal = new Node(NT_COMP_LITERAL);
+    if(match(LPAREN)){
+        Node* tyy_decl = parse_tyy_decl();
+        if(!tyy_decl){
+            error("Expected type identfier declaration after '(' for compound literal");
+        }
+        comp_literal->addChild(tyy_decl);
+        expect(RPAREN);
+    }
+
+    Node* list_literal = parse_list_literal();
+    if(!list_literal){
+        error("Expected a list-literal for compound literal");
+    }
+    
+    comp_literal->addChild(list_literal);
+
+    return comp_literal;
+}
+Node* Parser::parse_list_literal() {
+    // list_literal ::= '{' designated_init { ',' designated_init } '}'
+    if (!match(LBRACE)) return nullptr;
+
+    Node* list_literal = new Node(NT_LIST_LITERAL);
+
+    if (peek().type != RBRACE) { // allow empty list: {}
+        Node* designated_init = parse_designated_init();
+        if (!designated_init) {
+            error("Expected designated initializer inside list literal");
+        }
+
+        list_literal->addChild(designated_init);
+
+        while (match(COMMA)) {
+            Node* next = parse_designated_init();
+            if (!next) {
+                error("Expected designated initializer after ',' in list literal");
+            }
+            list_literal->addChild(next);
         }
     }
 
-    return ArgList;
+    expect(RBRACE);
+    return list_literal;
 }
 
-ASTNode* Parser::parsePrimary() {
-    ASTNode* expr = parseAtom(); // was the old parsePrimary()
-    if (!expr) return nullptr;
+Node* Parser::parse_designated_init(){
+    // designated_init ::= [ '.' identifier '=' ] const_literal
 
-    while (true) {
-        Token tok = peek();
+    Node* designated_init = new Node(NT_DESIGNATED_INIT);
 
-        if (tok.type == TokenType::LBRACKET) {
-            advance();
-            ASTNode* index = parseExpression();
-            expect(TokenType::RBRACKET);
-
-            ASTNode* arrSub = new ASTNode(NT_ArraySubscripting);
-            arrSub->addChild(expr);
-            arrSub->addChild(index);
-
-            arrSub->typeInfo.base = BT_ARRAY;
-
-            // how should array Dimensions already be filled? this is something done in IR generation or later even
-            // if (!arrSub->typeInfo.arrayDimensions.empty()) {
-            //     arrSub->typeInfo.arrayDimensions.erase(
-            //         arrSub->typeInfo.arrayDimensions.begin()
-            //     );
-            // } else {
-            //     // Not an array? Fallback — treat as pointer dereference
-            //     if (arrSub->typeInfo.pointerLevel > 0) {
-            //         arrSub->typeInfo.pointerLevel--;
-            //     } else {
-            //         arrSub->typeInfo.base = BT_UNKNOWN;
-            //     }
-            // }
-
-            expr = arrSub;
+    if(match(DOT)){
+        Node* ident = parse_identifier();
+        if(!ident){
+            error("Expected identfier after '.' for designated init");
         }
-        else if (tok.type == TokenType::DOT || tok.type == TokenType::ARROW) {
-            advance();
-            if (peek().type != TokenType::IDENTIFIER) {
-                error("Expected member name after '.' or '->'");
-            }
-            Token member = advance();
-
-            ASTNode* access = new ASTNode(NT_StructAccess, tok.value);
-            access->addChild(expr);
-            access->addChild(new ASTNode(NT_Identifier, member.value));
-
-            access->typeInfo.base = BT_UNKNOWN;
-            expr = access;
+        if(!match(ASSIGN)){
+            error("Expected '=' after identifier for designated init");
         }
-        else if (tok.type == TokenType::LPAREN) {
-            advance();
-            ASTNode* call = new ASTNode(NT_CallExpr);
-            call->addChild(expr);
+        designated_init->addChild(ident);
+    }
 
-            ASTNode* ArgList = parseArgumentList();
+    size_t backup = pos;
+    Node* const_literal = parse_const_literal();
+    if(!const_literal){
+        pos = backup;
+        return nullptr;
+    }
 
-            Function func = symbols.getFunction(expr->value);
+    designated_init->addChild(const_literal);
 
-            if(func.paramCount != ArgList->children.size()){
-                error("Too many Arguments to function call, expected " + std::to_string(func.paramCount) + " have " + std::to_string(ArgList->children.size()));
-            }
+    return designated_init;
+}
 
-            call->addChild(ArgList);
 
-            call->typeInfo = func.returnType;
+// LiteralTokens
+Node* Parser::parse_const_literal(){
+    // const_literal	::= expr_const | str_const | char_const | num_const | int_const | null_const
 
-            expr = call;
-        }
-        else if (tok.type == TokenType::INCREMENT || tok.type == TokenType::DECREMENT) {
-            advance();
-            ASTNode* postIncDec = new ASTNode(NT_PostFixExpr, tok.value);
+    Node* const_literal = nullptr;
 
-            postIncDec->addChild(expr);
-            postIncDec->typeInfo = expr->typeInfo;
+    if( (const_literal = parse_expr_const()) != nullptr ) return const_literal;
+    if( (const_literal = parse_str_const()) != nullptr ) return const_literal;
+    if( (const_literal = parse_char_const()) != nullptr ) return const_literal;
+    if( (const_literal = parse_num_const()) != nullptr ) return const_literal;
+    if( (const_literal = parse_int_const()) != nullptr ) return const_literal;
+    if( (const_literal = parse_null_const()) != nullptr ) return const_literal;
 
-            expr = postIncDec;
-        } else {
+    return nullptr;
+}
+Node* Parser::parse_null_const(){
+    // null_const	::= "NULL"
+    if(peek().value == "NULL") return new Node(NT_NULL_CONST, "NULL");
+}
+Node* Parser::parse_expr_const(){
+    // expr_const	::= int_const { ( '+' | '-' | '*' | '%' | '/' | '&' | '|' ) int_const }
+
+    Node* left = parse_int_const();
+    if(!left) return nullptr;
+
+    Node* expr = left;
+
+    while(!isAtEnd()){
+        TokenType t = peek().type;
+
+        if(
+            t == PLUS ||
+            t == MINUS ||
+            t == STAR ||
+            t == SLASH ||
+            t == PERCENT ||
+            t == BIT_AND ||
+            t == BIT_OR
+        ){
+            Token opTok = advance();
+            Node* right = parse_int_const();
+
+            if(!right) error("Expected integer constant after operator: " + opTok.value);
+
+            Node* binOp = new Node(NT_EXPR_CONST, opTok.value);
+            binOp->addChild(expr);
+            binOp->addChild(right);
+            expr = binOp;
+        }else{
             break;
         }
+
+    }
+    return expr;
+}
+Node* Parser::parse_str_const(){
+    // str_const	::= [ 'L' ] '"' { character } '"'
+
+    Node* str_const = new Node(NT_STR_CONST);
+    if(peek().value == "L"){
+        advance();
+        str_const->addChild(new Node(NT_CHARACTER, "L"));
     }
 
-    return expr;
+    size_t backup = pos;
+    if(peek().type == TokenType::STRING_LITERAL){
+        str_const->addChild(new Node(NT_STRING_LITERAL, advance().value));
+    }else{
+        pos = backup;
+        return nullptr;
+    }
+
+    return str_const;
+}
+Node* Parser::parse_char_const(){
+
+    // char_const	::= "'" character  "'"
+
+    if(peek().type != CHAR_LITERAL) return nullptr;
+    
+    return new Node(NT_CHARACTER, advance().value);
+}
+Node* Parser::parse_num_const(){
+    // num_const	::= integer | rational
+
+    if(peek().type == TokenType::INTEGER_LITERAL) return new Node(NT_NULL_CONST, advance().value);
+    if(peek().type == TokenType::FLOAT_LITERAL) return new Node(NT_NULL_CONST, advance().value);
+    
+    return nullptr;
+}
+Node* Parser::parse_float_const(){
+    // float_const	::= float
+
+    if(peek().type == TokenType::FLOAT_LITERAL) return new Node(NT_FLOAT_CONST, advance().value);
+    
+    return nullptr;
+}
+Node* Parser::parse_int_const(){
+    // int_const	::= integer | char_const
+
+    if(peek().type == TokenType::INTEGER_LITERAL) return new Node(NT_INT_CONST, advance().value);
+    if(peek().type == TokenType::CHAR_LITERAL) new Node(NT_INT_CONST, std::to_string(static_cast<int>(advance().value[0])));
+    
+    return nullptr;
+}
+Node* Parser::parse_rational(){
+    // rational	::= [ intenger ] '.' integer
+    Node* rational = new Node(NT_RATIONAL);
+
+    if(match(TokenType::INTEGER_LITERAL)){
+        Node* first = parse_integer();
+        if(first) rational->addChild(first);
+    }
+
+    if(!match(DOT)) return nullptr;
+
+
+    Node* second = parse_integer();
+    if(!second){
+        error("Expected another integer after '.' for rational");
+    }
+
+    rational->addChild(second);
+    
+
+    return rational;
+}
+Node* Parser::parse_integer(){
+    // integer		::= dec_integer | hex_integer | oct_integer | bin_integer
+
+    Node* integer = nullptr;
+    
+    if( (integer = parse_dec_integer()) != nullptr ) return integer;
+    if( (integer = parse_hex_integer()) != nullptr ) return integer;
+    if( (integer = parse_oct_integer()) != nullptr ) return integer;
+    if( (integer = parse_bin_integer()) != nullptr ) return integer;
+
+    return nullptr;
+}
+
+Node* Parser::parse_bin_integer(){
+    // bin_integer	::= ( "0b" | "0B" ) bin_digit { bin_digit }
+
+    Node* bin_integer = new Node(NT_BIN_INTEGER);
+
+    
+
+    return bin_integer;
+}
+
+Node* Parser::parse_oct_integer(){
+    Node* oct_integer = new Node(NT_OCT_INTEGER);
+    return oct_integer;
+}
+Node* Parser::parse_hex_integer(){
+    Node* hex_integer = new Node(NT_HEX_INTEGER);
+    return hex_integer;
+}
+Node* Parser::parse_dec_integer(){
+    Node* dec_integer = new Node(NT_DEC_INTEGER);
+    return dec_integer;
+}
+Node* Parser::parse_identifier(){
+    Node* identifier = new Node(NT_IDENTIFIER);
+    return identifier;
+}
+Node* Parser::parse_letter(){
+    Node* letter = new Node(NT_LETTER);
+    return letter;
+}
+Node* Parser::parse_lower_case(){
+    Node* lower_case = new Node(NT_LOWER_CASE);
+    return lower_case;
+}
+Node* Parser::parse_upper_case(){
+    Node* upper_case = new Node(NT_UPPER_CASE);
+    return upper_case;
+}
+Node* Parser::parse_hex_digit(){
+    Node* hex_digit = new Node(NT_HEX_DIGIT);
+    return hex_digit;
+}
+Node* Parser::parse_digit(){
+    Node* digit = new Node(NT_DIGIT);
+    return digit;
+}
+Node* Parser::parse_oct_digit(){
+    Node* oct_digit = new Node(NT_OCT_DIGIT);
+    return oct_digit;
+}
+Node* Parser::parse_bin_digit(){
+    Node* bin_digit = new Node(NT_BIN_DIGIT);
+    return bin_digit;
+}
+Node* Parser::parse_character(){
+    Node* character = new Node(NT_CHARACTER);
+    return character;
+}
+Node* Parser::parse_printable(){
+    Node* printable = new Node(NT_PRINTABLE);
+    return printable;
+}
+Node* Parser::parse_char_escape(){
+    Node* char_escape = new Node(NT_CHAR_ESCAPE);
+    return char_escape;
+}
+Node* Parser::parse_hex_escape(){
+    Node* hex_escape = new Node(NT_HEX_ESCAPE);
+    return hex_escape;
+}
+Node* Parser::parse_oct_escape(){
+    Node* oct_escape = new Node(NT_OCT_ESCAPE);
+    return oct_escape;
+}
+Node* Parser::parse_escapble(){
+    Node* escapble = new Node(NT_ESCAPBLE);
+    return escapble;
+}
+Node* Parser::parse_comment(){
+    Node* comment = new Node(NT_COMMENT);
+    return comment;
 }
